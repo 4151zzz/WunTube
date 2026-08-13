@@ -363,21 +363,21 @@ app.get('/api/stream', (req, res) => {
 
   console.log(`[stream] Starting stream for: ${videoId}`);
 
-  // Set headers for streaming audio playback (native opus = no conversion needed)
-  res.setHeader('Content-Type', 'audio/webm; codecs=opus');
+  // Set headers — use octet-stream since format varies per video
+  res.setHeader('Content-Type', 'audio/webm');
   res.setHeader('Transfer-Encoding', 'chunked');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('X-Content-Type-Options', 'nosniff');
 
   const args = [
     url,
-    '-f', 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio',
+    '-f', 'bestaudio',          // just pick the best audio available, any format
     '-o', '-',
     '--no-warnings',
     '--quiet',
     '--no-playlist',
     '--rm-cache-dir',
-    '--extractor-args', 'youtube:player_client=web',
+    '--extractor-args', 'youtube:player_client=ios',   // ios client = most reliable
   ];
 
   const proc = spawn(ytDlp, args);

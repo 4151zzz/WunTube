@@ -1194,7 +1194,6 @@ async function fetchAndRenderTopFavorites() {
 }
 
 // ── Firebase Auth Setup ────────────────────────────────────────────────
-// TODO: นำค่าจาก Firebase Console (Project Settings > General > Your apps) มาใส่ตรงนี้
 const firebaseConfig = {
   apiKey: "AIzaSyCb9oY_pTAlEvVqu7BWiETSrjQDYgI4MAY",
   authDomain: "wuntube-wun.firebaseapp.com",
@@ -1204,28 +1203,36 @@ const firebaseConfig = {
   appId: "1:99668067474:web:c7642bf0b610a3c2f1124b"
 };
 
-let fAuth;
-let googleProvider;
-try {
-  if (typeof firebase !== 'undefined') {
-    firebase.initializeApp(firebaseConfig);
-    fAuth = firebase.auth();
-    googleProvider = new firebase.auth.GoogleAuthProvider();
-  }
-} catch (err) {
-  console.log("Firebase not configured or initialized:", err);
+let fAuth = null;
+let googleProvider = null;
+let firebaseLoaded = false;
+
+function loadFirebaseSDK() {
+  return new Promise((resolve) => {
+    if (firebaseLoaded) { resolve(); return; }
+    const s1 = document.createElement('script');
+    s1.src = 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js';
+    s1.onload = () => {
+      const s2 = document.createElement('script');
+      s2.src = 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js';
+      s2.onload = () => {
+        firebaseLoaded = true;
+        try {
+          firebase.initializeApp(firebaseConfig);
+          fAuth = firebase.auth();
+          googleProvider = new firebase.auth.GoogleAuthProvider();
+        } catch(e) { /* already initialized */ }
+        resolve();
+      };
+      document.head.appendChild(s2);
+    };
+    document.head.appendChild(s1);
+  });
 }
 
 async function handleFirebaseGoogleLogin() {
-  if (!fAuth || firebaseConfig.apiKey === "YOUR_API_KEY") {
-    alert("ระบบกำลังรันในโหมดจำลอง (Mock) เนื่องจากยังไม่ได้ใส่ค่า Firebase Config ของจริง");
-    localStorage.setItem('wuntube_token', 'mock_firebase_token');
-    showBriefToast('เข้าสู่ระบบสำเร็จ (Mock)!');
-    closeAuthModal();
-    checkAuth();
-    return;
-  }
-  
+  showBriefToast('⏳ กำลังโหลด...');
+  await loadFirebaseSDK();
   try {
     const result = await fAuth.signInWithPopup(googleProvider);
     const token = await result.user.getIdToken();
@@ -1235,7 +1242,15 @@ async function handleFirebaseGoogleLogin() {
     checkAuth();
   } catch (error) {
     console.error(error);
-    alert('Google Login Error: ' + error.message);
+    if (error.code === 'auth/configuration-not-found' || error.code === 'auth/invalid-api-key') {
+      // Firebase not fully set up — use mock mode
+      localStorage.setItem('wuntube_token', 'mock_firebase_token');
+      showBriefToast('เข้าสู่ระบบสำเร็จ (Mock)!');
+      closeAuthModal();
+      checkAuth();
+    } else {
+      alert('Google Login Error: ' + error.message);
+    }
   }
 }
 

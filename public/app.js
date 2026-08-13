@@ -574,19 +574,36 @@ function loadAndPlay(track) {
 
   audio.src = `${API}/stream?videoId=${encodeURIComponent(track.videoId)}`;
   audio.load();
-  audio.play().catch(err => {
-    console.error('Play failed for videoId ' + track.videoId + ':', err);
-    // NotAllowedError = mobile browser blocked autoplay (requires user gesture)
-    // Do NOT skip to next — just show paused state and wait for user to tap play
-    if (err.name === 'NotAllowedError') {
-      setPlayerState('paused');
-      showBriefToast('⏸ กดปุ่ม ▶ เพื่อเริ่มเล่น');
-    } else {
-      // Real error (network, format, etc.) — skip to next
-      setPlayerState('paused');
-      setTimeout(() => autoplayNext(), 1500);
-    }
-  });
+
+  // Wait for the audio to be ready (handles redirect to CDN URL)
+  const onCanPlay = () => {
+    audio.removeEventListener('canplay', onCanPlay);
+    audio.play().catch(err => {
+      console.error('Play failed for videoId ' + track.videoId + ':', err);
+      if (err.name === 'AbortError') {
+        // Safe to ignore — browser is still loading/redirecting
+        return;
+      }
+      if (err.name === 'NotAllowedError') {
+        setPlayerState('paused');
+        showBriefToast('⏸ กดปุ่ม ▶ เพื่อเริ่มเล่น');
+      } else {
+        setPlayerState('paused');
+        setTimeout(() => autoplayNext(), 2000);
+      }
+    });
+  };
+  audio.addEventListener('canplay', onCanPlay);
+
+  // Fallback: if canplay never fires (e.g. error) remove listener
+  const onError = () => {
+    audio.removeEventListener('canplay', onCanPlay);
+    audio.removeEventListener('error', onError);
+    setPlayerState('paused');
+    console.error('[audio] Error loading track:', track.videoId);
+    setTimeout(() => autoplayNext(), 2000);
+  };
+  audio.addEventListener('error', onError, { once: true });
 
   // Record history if logged in
   if (currentUser) {

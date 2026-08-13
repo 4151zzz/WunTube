@@ -371,13 +371,13 @@ app.get('/api/stream', (req, res) => {
 
   const args = [
     url,
-    '-f', 'bestaudio',          // just pick the best audio available, any format
+    '-f', 'bestaudio',
     '-o', '-',
     '--no-warnings',
     '--quiet',
     '--no-playlist',
     '--rm-cache-dir',
-    '--extractor-args', 'youtube:player_client=ios',   // ios client = most reliable
+    '--no-check-formats',
   ];
 
   const proc = spawn(ytDlp, args);

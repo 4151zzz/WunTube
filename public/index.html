@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="description" content="เล่นเพลงจาก YouTube พร้อม Background Playback, Playlist และ Autoplay" />
+  <meta name="theme-color" content="#050508" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>WunTube — YouTube Music Player</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <!-- YouTube IFrame API -->
+  <script src="https://www.youtube.com/iframe_api"></script>
+</head>
+<body>
+
+  <!-- ═══ ANIMATED BG ═══ -->
+  <div class="bg-mesh"></div>
+  <div class="bg-orb orb-1"></div>
+  <div class="bg-orb orb-2"></div>
+  <div class="bg-orb orb-3"></div>
+
+  <!-- ═══ SPLASH SCREEN ═══ -->
+  <div id="splashScreen" class="splash-screen">
+    <div class="splash-content">
+      <div class="splash-logo-wrap">
+        <img src="app-icon.png" alt="WunTube" />
+      </div>
+      <div class="splash-name">Wun<span>Tube</span></div>
+      <div class="splash-bar"><div class="splash-fill"></div></div>
+    </div>
+  </div>
+
+  <!-- Hidden audio element -->
+  <audio id="globalAudio" preload="none"></audio>
+
+  <!-- ═══ NOW PLAYING EXPANDED VIEW ═══ -->
+  <div id="nowPlayingPanel" class="now-playing-panel hidden">
+    <div class="np-bg-blur" id="npBgBlur"></div>
+    <div class="np-inner">
+
+      <!-- Left: artwork + controls -->
+      <div class="np-left">
+        <div class="np-artwork-wrap" id="npArtworkWrap">
+          <!-- Video / Artwork toggle -->
+          <div id="npVideoWrap" class="np-video-wrap hidden">
+            <div id="npYTPlayer"></div>
+            <div class="np-video-overlay"></div>
+          </div>
+          <img id="npArtwork" class="np-artwork" src="" alt="album art" />
+          <div class="np-artwork-glow" id="npArtworkGlow"></div>
+          <div class="np-viz" id="npViz">
+            <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+          </div>
+          <!-- Toggle button -->
+          <button id="npVideoToggleBtn" class="np-video-toggle-btn hidden" title="สลับวิดิโอ / Artwork">
+            <svg id="npVideoToggleIconVideo" viewBox="0 0 24 24" fill="none">
+              <rect x="2" y="4" width="20" height="16" rx="3" stroke="currentColor" stroke-width="2"/>
+              <polygon points="10 9 16 12 10 15 10 9" fill="currentColor"/>
+            </svg>
+            <svg id="npVideoToggleIconArt" viewBox="0 0 24 24" fill="none" class="hidden">
+              <rect x="3" y="3" width="18" height="18" rx="3" stroke="currentColor" stroke-width="2"/>
+              <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/>
+              <polyline points="21 15 16 10 5 21" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </div>
+
+        <div class="np-track-info">
+          <div class="np-badge hidden" id="npBgBadge">
+            <span class="dot"></span> เล่นเบื้องหลัง
+          </div>
+          <h2 id="npTitle" class="np-title">—</h2>
+          <p id="npChannel" class="np-channel">—</p>
+
+          <div class="np-actions-row">
+            <button id="npBtnPlaylist" class="np-action-btn" title="เพิ่มใน Playlist">
+              <svg viewBox="0 0 24 24" fill="none"><line x1="8" y1="6" x2="21" y2="6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="8" y1="12" x2="21" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="8" y1="18" x2="16" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="3" y1="6" x2="3.01" y2="6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="3" y1="12" x2="3.01" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="3" y1="18" x2="3.01" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+              <span>เพิ่มใน Playlist</span>
+            </button>
+            <button id="npBtnDownload" class="np-action-btn" title="ดาวน์โหลด">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><polyline points="7 10 12 15 17 10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="12" y1="15" x2="12" y2="3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+              <span>ดาวน์โหลด MP3</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Progress -->
+        <div class="np-progress-area" id="npProgressArea">
+          <div class="np-progress-track">
+            <div id="npProgressFill" class="np-progress-fill"></div>
+            <div id="npProgressThumb" class="np-progress-thumb"></div>
+          </div>
+          <div class="np-time-row">
+            <span id="npTimeCurrent">0:00</span>
+            <span id="npTimeDuration">0:00</span>
+          </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="np-controls">
+          <button id="npBtnLoop" class="np-ctrl np-ctrl-sm" title="เล่นซ้ำ">
+            <svg viewBox="0 0 24 24" fill="none"><polyline points="17 1 21 5 17 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 11V9a4 4 0 0 1 4-4h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><polyline points="7 23 3 19 7 15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 13v2a4 4 0 0 1-4 4H3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
+          <button id="npBtnPrev" class="np-ctrl" title="ก่อนหน้า">
+            <svg viewBox="0 0 24 24" fill="none"><polygon points="19 20 9 12 19 4 19 20" fill="currentColor"/><line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
+          <button id="npBtnPlay" class="np-ctrl np-ctrl-play" title="เล่น/หยุด">
+            <svg id="npIconPlay" viewBox="0 0 24 24" fill="none"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/></svg>
+            <svg id="npIconPause" viewBox="0 0 24 24" fill="none" class="hidden"><rect x="6" y="4" width="4" height="16" rx="1" fill="currentColor"/><rect x="14" y="4" width="4" height="16" rx="1" fill="currentColor"/></svg>
+            <svg id="npIconLoading" viewBox="0 0 24 24" fill="none" class="hidden spin"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" stroke-dasharray="28" stroke-dashoffset="10" stroke-linecap="round"/></svg>
+          </button>
+          <button id="npBtnNext" class="np-ctrl" title="ถัดไป">
+            <svg viewBox="0 0 24 24" fill="none"><polygon points="5 4 15 12 5 20 5 4" fill="currentColor"/><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
+          <button id="npBtnShuffle" class="np-ctrl np-ctrl-sm" title="สุ่มเพลง">
+            <svg viewBox="0 0 24 24" fill="none"><polyline points="16 3 21 3 21 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="4" y1="20" x2="21" y2="3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><polyline points="21 16 21 21 16 21" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="15" y1="15" x2="21" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+
+        <!-- Volume -->
+        <div class="np-volume-row">
+          <svg class="vol-icon" viewBox="0 0 24 24" fill="none"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor"/></svg>
+          <input id="npVolumeSlider" type="range" class="np-volume-slider" min="0" max="100" value="100" />
+          <svg class="vol-icon" viewBox="0 0 24 24" fill="none"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </div>
+      </div>
+
+      <!-- Right: Queue / Up Next -->
+      <div class="np-right">
+        <div class="np-right-header">
+          <div class="np-tab-bar">
+            <button class="np-tab active" id="tabQueue" onclick="switchNpTab('queue')">คิวเพลง</button>
+            <button class="np-tab" id="tabRelated" onclick="switchNpTab('related')">เพลงที่กำลังค้นหา</button>
+          </div>
+        </div>
+        <div id="npQueueList" class="np-queue-list"></div>
+        <div id="npRelatedList" class="np-queue-list hidden"></div>
+      </div>
+
+      <!-- Close btn -->
+      <button id="npCloseBtn" class="np-close-btn" title="ย่อลง">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M19 9l-7 7-7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- ═══ PLAYLIST MODAL ═══ -->
+  <div id="playlistModal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="modalTitle" class="modal-title">เพิ่มใน Playlist</h3>
+        <button class="modal-close" id="modalCloseBtn">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="create-playlist-row">
+          <input id="newPlaylistName" type="text" class="playlist-name-input" placeholder="ชื่อ Playlist ใหม่..." />
+          <button id="createPlaylistBtn" class="create-pl-btn">สร้าง</button>
+        </div>
+        <div id="playlistPickerList" class="playlist-picker-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ CREATE PLAYLIST MODAL (from sidebar) ═══ -->
+  <div id="createPlaylistModal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 class="modal-title">สร้าง Playlist ใหม่</h3>
+        <button class="modal-close" id="createModalCloseBtn">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <input id="newPlaylistNameMain" type="text" class="playlist-name-input" placeholder="ชื่อ Playlist เช่น เพลงโปรด, Chill..." />
+        <button id="createPlaylistMainBtn" class="create-pl-btn full-btn">สร้าง Playlist</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="app-layout">
+
+    <!-- ═══ SIDEBAR ═══ -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-logo">
+        <div class="logo-icon">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M9 19V6l12-3v13" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="19" r="3" stroke="currentColor" stroke-width="2.2"/><circle cx="18" cy="16" r="3" stroke="currentColor" stroke-width="2.2"/></svg>
+        </div>
+        <div style="display:flex; flex-direction:column; flex:1;">
+          <span class="logo-text">Wun<span class="accent">Tube</span></span>
+          <span class="logo-slogan" style="font-size: 0.6rem; color: var(--text-3); margin-top: 2px;">เล่นเพลงจาก YouTube ได้แม้ปิดหน้าจอ 🔒 — ฟรี ไม่มีโฆษณา</span>
+        </div>
+        <button class="sidebar-close-btn" id="sidebarCloseBtn">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+
+      <nav class="sidebar-nav">
+        <a href="#" class="nav-item active" id="navHome" onclick="showView('home', event)">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" stroke="currentColor" stroke-width="2"/><polyline points="9 22 9 12 15 12 15 22" stroke="currentColor" stroke-width="2"/></svg>
+          <span>หน้าแรก</span>
+        </a>
+        <a href="#" class="nav-item" id="navQueue" onclick="showView('queue', event)">
+          <svg viewBox="0 0 24 24" fill="none"><line x1="8" y1="6" x2="21" y2="6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="8" y1="12" x2="21" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="8" y1="18" x2="21" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="3" y1="6" x2="3.01" y2="6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="3" y1="12" x2="3.01" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="3" y1="18" x2="3.01" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <span>คิวเพลง <span id="queueCountBadge" class="badge hidden">0</span></span>
+        </a>
+      </nav>
+
+      <div class="sidebar-section-title">
+        <span>🔥 มาแรง</span>
+        <button id="addPlaylistBtn" class="add-pl-btn" title="สร้าง Playlist ใหม่">
+          <svg viewBox="0 0 24 24" fill="none"><line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div id="playlistSidebarList" class="playlist-sidebar-list"></div>
+
+      <div id="shareBar" class="share-bar hidden">
+        <p class="share-title">🔗 แชร์ให้เพื่อน</p>
+        <div class="share-row">
+          <input id="shareUrl" class="share-input" type="text" readonly />
+          <button id="copyShareBtn" class="share-copy-btn">คัดลอก</button>
+        </div>
+        <p id="shareHint" class="share-hint"></p>
+      </div>
+    </aside>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <!-- ═══ MAIN ═══ -->
+    <main class="main-content">
+
+      <header class="topbar">
+        <button class="menu-btn" id="menuBtn">
+          <svg viewBox="0 0 24 24" fill="none"><line x1="3" y1="6" x2="21" y2="6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="3" y1="12" x2="21" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="3" y1="18" x2="21" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+        <div style="display:flex; flex-direction:column;">
+          <span class="logo-text-sm">Wun<span class="accent">Tube</span></span>
+          <span class="logo-slogan" style="font-size: 0.55rem; color: var(--text-3); margin-top: 2px;">เล่นเพลงจาก YouTube ได้แม้ปิดหน้าจอ 🔒 — ฟรี ไม่มีโฆษณา</span>
+        </div>
+        <div id="bgPlayBadge" class="bg-badge hidden">
+          <span class="bg-dot"></span> เล่นเบื้องหลัง
+        </div>
+      </header>
+
+      <!-- ── HOME VIEW ── -->
+      <div id="viewHome">
+
+        <header class="mobile-header hidden-desktop">
+          <h1 class="mobile-title">สำรวจ</h1>
+          <div class="user-avatar hidden" id="userAvatarBtn" onclick="logout()">
+            <span id="userAvatarText">U</span>
+          </div>
+        </header>
+
+
+
+        <!-- Top Favorites Section (Hidden until logged in) -->
+        <section class="curated-section hidden" id="topFavoritesSection">
+          <div class="section-header">
+            <h2 class="section-heading">⭐ เพลงโปรดของคุณ (Top Songs)</h2>
+          </div>
+          <div class="curated-grid" id="topFavoritesGrid">
+            <!-- Rendered via JS -->
+          </div>
+        </section>
+
+        <!-- Cinematic Trending Section -->
+        <section class="cinematic-hero-section" id="curatedSection">
+          <img id="cineBgImg" class="cine-bg" src="https://images.unsplash.com/photo-1611162617474-5b21e879e113?q=80&w=1200&auto=format&fit=crop" alt="bg" />
+          <div class="cine-overlay"></div>
+          
+          <div class="cine-content-wrap">
+            <div class="cine-info">
+              
+              <!-- Search Bar -->
+              <form id="searchForm" class="hero-search-form" autocomplete="off" style="margin-bottom: 40px;">
+                <div class="hero-search-wrap">
+                  <svg class="hero-search-icon" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="2"/><path d="m21 21-4.35-4.35" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                  <input type="text" id="searchInput" class="hero-search-input" placeholder="ชื่อเพลง, ศิลปิน, อัลบั้ม..." autocomplete="off" spellcheck="false" />
+                  <button type="submit" id="searchBtn" class="hero-search-btn">
+                    <svg viewBox="0 0 24 24" fill="none"><path d="M5 12h14M12 5l7 7-7 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                </div>
+                <!-- Quick Tags -->
+                <div class="quick-tags chips-scroll">
+                  <button type="button" class="tag" onclick="quickSearch(this)">🔥 ฮิตตอนนี้</button>
+                  <button type="button" class="tag" onclick="quickSearch(this)">💪 ออกกำลังกาย</button>
+                  <button type="button" class="tag" onclick="quickSearch(this)">😌 ผ่อนคลาย</button>
+                  <button type="button" class="tag" onclick="quickSearch(this)">☕ Lo-fi Chill</button>
+                </div>
+              </form>
+
+              <div class="cine-eyebrow">TRENDING PLAYLIST</div>
+              <h2 id="cineTitle" class="cine-title">เพลงฮิต TikTok</h2>
+              <p id="cineSub" class="cine-sub">ไวรัล • 1.2M views</p>
+              <button class="cine-play-btn" onclick="quickSearch({textContent: document.getElementById('cineTitle').innerText})">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> ฟังเลย
+              </button>
+            </div>
+            
+            <div class="cine-carousel">
+              <div class="cine-thumb active" onclick="setCineSlide(this, 'เพลงฮิต TikTok', 'ไวรัล • 1.2M views', 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?q=80&w=1200&auto=format&fit=crop')">
+                <img src="https://images.unsplash.com/photo-1611162617474-5b21e879e113?q=80&w=400&auto=format&fit=crop" alt="TikTok" />
+                <div class="cine-thumb-text">TIKTOK HITS</div>
+              </div>
+              <div class="cine-thumb" onclick="setCineSlide(this, 'Lo-fi Chill', 'ผ่อนคลาย • 2M views', 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?q=80&w=1200&auto=format&fit=crop')">
+                <img src="https://images.unsplash.com/photo-1514525253161-7a46d19cd819?q=80&w=400&auto=format&fit=crop" alt="Lo-Fi" />
+                <div class="cine-thumb-text" style="color: #f0a83c;">LO-FI CHILL</div>
+              </div>
+              <div class="cine-thumb" onclick="setCineSlide(this, 'POP GOLD', 'สุดฮิต • 5M views', 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?q=80&w=1200&auto=format&fit=crop')">
+                <img src="https://images.unsplash.com/photo-1470225620780-dba8ba36b745?q=80&w=400&auto=format&fit=crop" alt="Pop" />
+                <div class="cine-thumb-text" style="color: #35e0c0;">POP HITS</div>
+              </div>
+              <div class="cine-thumb" onclick="setCineSlide(this, 'เพลงร็อคตลอดกาล', 'เดือดๆ • 3M views', 'https://images.unsplash.com/photo-1498038432885-c6f3f1b912ee?q=80&w=1200&auto=format&fit=crop')">
+                <img src="https://images.unsplash.com/photo-1498038432885-c6f3f1b912ee?q=80&w=400&auto=format&fit=crop" alt="Rock" />
+                <div class="cine-thumb-text" style="color: #ff5c74;">ROCK CLASSICS</div>
+              </div>
+              <div class="cine-thumb" onclick="setCineSlide(this, 'เพลงช้าเศร้า', 'อกหัก • 800K views', 'https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?q=80&w=1200&auto=format&fit=crop')">
+                <img src="https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?q=80&w=400&auto=format&fit=crop" alt="Sad" />
+                <div class="cine-thumb-text" style="color: #a9a29a;">SAD SONGS</div>
+              </div>
+              <div class="cine-thumb" onclick="setCineSlide(this, 'เพลงไทยสากล', 'ฮิตติดชาร์ต • 4M views', 'https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?q=80&w=1200&auto=format&fit=crop')">
+                <img src="https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?q=80&w=400&auto=format&fit=crop" alt="Thai" />
+                <div class="cine-thumb-text" style="color: #ffe3b0;">THAI HITS</div>
+              </div>
+            </div>
+          </div>
+          
+          <script>
+            function setCineSlide(el, title, sub, bgUrl) {
+              document.querySelectorAll('.cine-thumb').forEach(t => t.classList.remove('active'));
+              el.classList.add('active');
+              const bg = document.getElementById('cineBgImg');
+              bg.style.opacity = 0;
+              setTimeout(() => {
+                bg.src = bgUrl;
+                bg.style.opacity = 0.6;
+              }, 300);
+              document.getElementById('cineTitle').innerText = title;
+              document.getElementById('cineSub').innerText = sub;
+            }
+          </script>
+        </section>
+        <!-- Top Favorites Section (Hidden until logged in) -->
+        <section class="curated-section hidden" id="topFavoritesSection">
+          <div class="section-header">
+            <h2 class="section-heading">🔥 สำหรับคุณ</h2>
+          </div>
+          <div class="curated-grid" id="topFavoritesGrid">
+            <!-- Rendered via JS -->
+          </div>
+        </section>
+      </div>
+
+      <!-- ── SEARCH RESULTS VIEW (NEW PAGE) ── -->
+      <div id="viewSearch" class="hidden">
+        <div class="search-page-header">
+          <button class="search-back-btn" id="searchBackBtn" onclick="showView('home', event)">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M19 12H5M12 5l-7 7 7 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <div class="search-page-form-wrap">
+            <form id="searchFormPage" class="search-page-form" autocomplete="off">
+              <svg class="sp-icon" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="2"/><path d="m21 21-4.35-4.35" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+              <input type="text" id="searchInputPage" class="sp-input" placeholder="ค้นหาเพลง..." autocomplete="off" spellcheck="false" />
+              <button type="submit" class="sp-submit-btn" id="searchBtnPage">
+                <svg viewBox="0 0 24 24" fill="none"><path d="M5 12h14M12 5l7 7-7 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+            </form>
+          </div>
+        </div>
+
+        <div id="searchStatusBar" class="search-status-bar hidden">
+          <div class="search-spinner"></div>
+          <span id="searchStatusText">กำลังค้นหา...</span>
+        </div>
+
+        <div class="search-results-area">
+          <div class="search-results-meta hidden" id="searchResultsMeta">
+            <h2 id="resultsTitle" class="sresults-title"></h2>
+            <span id="resultsCount" class="results-badge"></span>
+          </div>
+          <div id="resultsGrid" class="results-list"></div>
+        </div>
+      </div>
+
+      <!-- ── QUEUE VIEW ── -->
+      <div id="viewQueue" class="hidden">
+        <div class="inner-view-header">
+          <h2 class="inner-view-title">🎵 คิวเพลง</h2>
+          <button id="clearQueueBtn" class="danger-btn">ล้างทั้งหมด</button>
+        </div>
+        <div class="inner-view-body">
+          <div id="queueList" class="queue-list"></div>
+          <div id="queueEmpty" class="queue-empty hidden">ยังไม่มีเพลงในคิว — ค้นหาแล้วกด + เพิ่มได้เลย</div>
+        </div>
+      </div>
+
+      <!-- ── PLAYLIST VIEW ── -->
+      <div id="viewPlaylist" class="hidden">
+        <div class="pl-page-hero">
+          <button class="search-back-btn" onclick="showView('home', event)">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M19 12H5M12 5l-7 7 7 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <div class="pl-hero-icon">
+            <svg viewBox="0 0 24 24" fill="none"><line x1="8" y1="6" x2="21" y2="6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="8" y1="12" x2="21" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="8" y1="18" x2="16" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </div>
+          <div class="pl-hero-info">
+            <h2 id="plViewTitle" class="pl-hero-name">Playlist</h2>
+            <p id="plViewCount" class="pl-hero-count">0 เพลง</p>
+          </div>
+          <div class="pl-hero-btns">
+            <button id="playAllBtn" class="play-all-btn">
+              <svg viewBox="0 0 24 24" fill="none"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/></svg>
+              เล่นทั้งหมด
+            </button>
+            <button id="deletePlBtn" class="delete-pl-btn" title="ลบ Playlist นี้">
+              <svg viewBox="0 0 24 24" fill="none"><polyline points="3 6 5 6 21 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M10 11v6M14 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="inner-view-body">
+          <div id="playlistTrackList" class="queue-list"></div>
+          <div id="playlistEmpty" class="queue-empty hidden">ยังไม่มีเพลงใน Playlist นี้</div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- ═══ BOTTOM NAVIGATION (MOBILE) ═══ -->
+  <nav id="bottomNav" class="bottom-nav hidden-desktop">
+    <a href="#" class="b-nav-item active" id="bNavHome" onclick="showView('home', event)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      <span>หน้าแรก</span>
+    </a>
+    <a href="#" class="b-nav-item" id="bNavSearch" onclick="focusSearch(event)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35" stroke-linecap="round"/></svg>
+      <span>ค้นหา</span>
+    </a>
+    <a href="#" class="b-nav-item" id="bNavCol" onclick="showView('queue', event)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6" stroke-linecap="round"/><line x1="8" y1="12" x2="21" y2="12" stroke-linecap="round"/><line x1="8" y1="18" x2="21" y2="18" stroke-linecap="round"/></svg>
+      <span>คิว</span>
+    </a>
+    <a href="#" class="b-nav-item auth-nav-item" id="bNavAuth" onclick="openAuthModal(event)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <span id="bNavLoginText">เข้าสู่ระบบ</span>
+    </a>
+  </nav>
+
+  <!-- ═══ AUTH MODAL ═══ -->
+  <div id="authModal" class="modal-overlay hidden" style="z-index: 700;">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="authModalTitle" class="modal-title">เข้าสู่ระบบ</h3>
+        <button class="modal-close" onclick="closeAuthModal()">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <form id="authForm" onsubmit="handleAuth(event)">
+          <div class="auth-input-group">
+            <input type="email" id="authEmail" class="playlist-name-input full-btn" placeholder="อีเมล (เช่น x@gmail.com)" required />
+          </div>
+          <div class="auth-input-group" style="margin-top: 10px;">
+            <input type="password" id="authPassword" class="playlist-name-input full-btn" placeholder="รหัสผ่าน" required />
+          </div>
+          <div id="authNameGroup" class="auth-input-group hidden" style="margin-top: 10px;">
+            <input type="text" id="authName" class="playlist-name-input full-btn" placeholder="ชื่อผู้ใช้" />
+          </div>
+          <button type="submit" id="authSubmitBtn" class="create-pl-btn full-btn" style="margin-top: 16px;">เข้าสู่ระบบ</button>
+
+          <div class="auth-divider" style="margin: 20px 0; text-align: center; font-size: 0.8rem; color: #8892b0; position: relative;">
+            <span style="background: rgba(12,14,28,0.97); padding: 0 10px; position: relative; z-index: 1;">หรือ</span>
+            <div style="position: absolute; top: 50%; left: 0; right: 0; height: 1px; background: rgba(255,255,255,0.1); z-index: 0;"></div>
+          </div>
+
+          <button type="button" class="google-auth-btn full-btn" style="background: #fff; color: #000; border: none; font-weight: 600; display: flex; justify-content: center; align-items: center;" onclick="handleFirebaseGoogleLogin()">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18" style="margin-right: 8px; color: #ea4335;"><path d="M21.35 11.1H12v2.8h5.45c-.25 1.3-1.45 3.8-5.45 3.8-3.3 0-6-2.7-6-6s2.7-6 6-6c1.6 0 3 .6 4.1 1.6l2.1-2.1C16.5 3.6 14.4 2.8 12 2.8 6.9 2.8 2.8 7 2.8 12s4.1 9.2 9.2 9.2c5.3 0 8.8-3.8 8.8-9 0-.6-.1-1.1-.2-1.6z"/></svg>
+            เข้าสู่ระบบด้วย Google (Firebase)
+          </button>
+
+          <p class="auth-switch-text" style="text-align: center; margin-top: 16px; font-size: 0.85rem; color: #8892b0;">
+            <span id="authSwitchPrompt">ยังไม่มีบัญชี?</span>
+            <a href="#" id="authSwitchBtn" onclick="toggleAuthMode(event)" style="color: #00e5ff; text-decoration: none;">สมัครสมาชิก</a>
+          </p>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ MINI PLAYER BAR ═══ -->
+  <div id="playerBar" class="player-bar hidden">
+    <div class="player-progress-area" id="progressArea">
+      <div class="progress-track">
+        <div id="progressFill" class="progress-fill"></div>
+      </div>
+    </div>
+    <div class="player-body" id="playerBodyClick">
+      <div class="player-left">
+        <div class="player-artwork" id="playerArtwork">
+          <img id="playerThumbImg" src="" alt="" />
+          <div class="artwork-viz" id="artworkViz">
+            <span></span><span></span><span></span><span></span><span></span>
+          </div>
+        </div>
+        <div class="player-info">
+          <div id="playerTitle" class="player-title">—</div>
+          <div id="playerChannel" class="player-channel">—</div>
+        </div>
+      </div>
+      <div class="player-center">
+        <button id="btnPrev" class="ctrl-btn" onclick="event.stopPropagation()">
+          <svg viewBox="0 0 24 24" fill="none"><polygon points="19 20 9 12 19 4 19 20" fill="currentColor"/><line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+        <button id="btnPlay" class="ctrl-btn ctrl-play" onclick="event.stopPropagation()">
+          <svg id="iconPlay" viewBox="0 0 24 24" fill="none"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/></svg>
+          <svg id="iconPause" viewBox="0 0 24 24" fill="none" class="hidden"><rect x="6" y="4" width="4" height="16" rx="1" fill="currentColor"/><rect x="14" y="4" width="4" height="16" rx="1" fill="currentColor"/></svg>
+          <svg id="iconLoading" viewBox="0 0 24 24" fill="none" class="hidden spin"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" stroke-dasharray="28" stroke-dashoffset="10" stroke-linecap="round"/></svg>
+        </button>
+        <button id="btnNext" class="ctrl-btn" onclick="event.stopPropagation()">
+          <svg viewBox="0 0 24 24" fill="none"><polygon points="5 4 15 12 5 20 5 4" fill="currentColor"/><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div class="player-right" onclick="event.stopPropagation()">
+        <svg class="vol-icon" viewBox="0 0 24 24" fill="none"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <input id="volumeSlider" type="range" class="volume-slider" min="0" max="100" value="100" />
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast hidden">
+    <div class="toast-icon">🎵</div>
+    <div class="toast-content">
+      <div id="toastTitle" class="toast-title">WunTube</div>
+      <div id="toastMsg" class="toast-msg"></div>
+    </div>
+    <div class="toast-progress"><div class="toast-bar"></div></div>
+  </div>
+
+  <!-- Firebase JS SDK -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

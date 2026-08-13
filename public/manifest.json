@@ -1,0 +1,17 @@
+{
+  "name": "WunTube",
+  "short_name": "WunTube",
+  "description": "เล่นเพลงจาก YouTube พร้อม Background Playback",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#060810",
+  "theme_color": "#7c4dff",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "https://img.icons8.com/color/192/music.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}

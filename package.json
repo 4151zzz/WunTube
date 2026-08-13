@@ -1,0 +1,21 @@
+{
+  "name": "youtube-mp3-downloader",
+  "version": "1.0.0",
+  "description": "YouTube MP3 Downloader Web App",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "share": "node server.js --share"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "firebase-admin": "^14.2.0",
+    "jsonwebtoken": "^9.0.3",
+    "localtunnel": "^2.0.2",
+    "sqlite3": "^6.0.1",
+    "uuid": "^9.0.0"
+  }
+}

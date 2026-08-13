@@ -520,7 +520,7 @@ function startCloudflaredTunnel(port) {
 
   return new Promise((resolve) => {
     let resolved = false;
-    const proc = spawn(cloudflared, ['tunnel', '--url', `http://localhost:${port}`], {
+    const proc = spawn(cloudflared, ['tunnel', '--url', `http://127.0.0.1:${port}`], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 

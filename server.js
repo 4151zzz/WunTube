@@ -352,57 +352,48 @@ app.get('/api/download', (req, res) => {
 
 // ────────────────────────────────────────────────────────────
 // GET /api/stream?videoId=xxx
-// Streams audio directly (for in-browser playback + background)
+// Returns direct CDN audio URL for the browser to play
+// (avoids 403 on server IPs — browser fetches directly from YT CDN)
 // ────────────────────────────────────────────────────────────
-app.get('/api/stream', (req, res) => {
+app.get('/api/stream', async (req, res) => {
   const { videoId } = req.query;
   if (!videoId) return res.status(400).json({ error: 'Missing videoId' });
 
   const url = `https://www.youtube.com/watch?v=${videoId}`;
   const ytDlp = getYtDlpPath();
 
-  console.log(`[stream] Starting stream for: ${videoId}`);
-
-  // Set headers — use octet-stream since format varies per video
-  res.setHeader('Content-Type', 'audio/webm');
-  res.setHeader('Transfer-Encoding', 'chunked');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('X-Content-Type-Options', 'nosniff');
+  console.log(`[stream] Getting direct URL for: ${videoId}`);
 
   const args = [
     url,
     '-f', 'bestaudio',
-    '-o', '-',
+    '-g',                    // print direct URL only, don't download
     '--no-warnings',
-    '--quiet',
     '--no-playlist',
-    '--rm-cache-dir',
     '--no-check-formats',
   ];
 
+  let directUrl = '';
+  let errOutput = '';
+
   const proc = spawn(ytDlp, args);
-
-  proc.stdout.pipe(res);
-
-  proc.stderr.on('data', (data) => {
-    console.error('[stream stderr]', data.toString().trim());
-  });
+  proc.stdout.on('data', d => { directUrl += d.toString(); });
+  proc.stderr.on('data', d => { errOutput += d.toString(); });
 
   proc.on('error', (err) => {
-    console.error('Failed to start yt-dlp (stream):', err);
-    if (!res.headersSent) {
-      res.status(500).json({ error: 'yt-dlp not found.' });
-    }
+    console.error('[stream] yt-dlp spawn error:', err);
+    if (!res.headersSent) res.status(500).json({ error: 'yt-dlp not found' });
   });
 
   proc.on('close', (code) => {
-    if (code !== 0 && code !== null) console.warn(`[stream] yt-dlp exited with code ${code}`);
-    console.log(`[stream] Stream ended for: ${videoId}`);
-  });
-
-  req.on('close', () => {
-    console.log(`[stream] Client disconnected, killing yt-dlp for: ${videoId}`);
-    proc.kill();
+    directUrl = directUrl.trim();
+    if (code !== 0 || !directUrl) {
+      console.error('[stream] yt-dlp failed:', errOutput.trim());
+      return res.status(500).json({ error: 'Could not get audio URL', details: errOutput.trim() });
+    }
+    console.log(`[stream] Got direct URL for: ${videoId}`);
+    // Redirect browser to the CDN URL directly
+    res.redirect(302, directUrl);
   });
 });
 

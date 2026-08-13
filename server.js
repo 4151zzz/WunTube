@@ -549,11 +549,13 @@ function startCloudflaredTunnel(port) {
   });
 }
 
-async function startLocaltunnel(port) {
+async function startLocaltunnel(port, subdomain) {
   try {
     const localtunnel = require('localtunnel');
     tunnelPassword = await getPublicIP();
-    const tunnel = await localtunnel({ port });
+    const opts = { port };
+    if (subdomain) opts.subdomain = subdomain;
+    const tunnel = await localtunnel(opts);
     publicUrl = tunnel.url;
     console.log(`\n🔗 แชร์ลิงก์นี้ให้เพื่อน: ${publicUrl}`);
     if (tunnelPassword) {
@@ -564,7 +566,7 @@ async function startLocaltunnel(port) {
     tunnel.on('close', () => {
       publicUrl = null;
       console.log('⚠️  Tunnel หลุด — กำลังเชื่อมต่อใหม่...');
-      setTimeout(() => startTunnel(port), 3000);
+      setTimeout(() => startTunnel(port, subdomain), 3000);
     });
     return tunnel;
   } catch (err) {
@@ -573,13 +575,16 @@ async function startLocaltunnel(port) {
   }
 }
 
-async function startTunnel(port) {
+async function startTunnel(port, subdomain) {
   console.log('🌐 กำลังสร้าง public link...');
-  const cf = await startCloudflaredTunnel(port);
-  if (cf) return cf;
-
-  console.log('↪️  ใช้ localtunnel แทน (อาจไม่เสถียร)...');
-  return startLocaltunnel(port);
+  if (!subdomain) {
+    const cf = await startCloudflaredTunnel(port);
+    if (cf) return cf;
+    console.log('↪️  ใช้ localtunnel แทน (อาจไม่เสถียร)...');
+  } else {
+    console.log(`📌 ระบบกำลังจองชื่อลิงก์ตายตัว: ${subdomain}`);
+  }
+  return startLocaltunnel(port, subdomain);
 }
 
 app.listen(PORT, HOST, async () => {
@@ -593,7 +598,12 @@ app.listen(PORT, HOST, async () => {
   }
 
   if (process.argv.includes('--share') || process.env.SHARE === '1') {
-    await startTunnel(PORT);
+    const fixedIdx = process.argv.indexOf('--fixed');
+    let subdomain = undefined;
+    if (fixedIdx !== -1 && process.argv[fixedIdx + 1]) {
+      subdomain = process.argv[fixedIdx + 1].toLowerCase().replace(/[^a-z0-9-]/g, '');
+    }
+    await startTunnel(PORT, subdomain);
   } else {
     console.log('💡 ต้องการลิงก์ส่งให้เพื่อนทางอินเทอร์เน็ต? รัน: npm run share\n');
   }

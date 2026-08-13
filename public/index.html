@@ -336,16 +336,43 @@
           <script>
             function setCineSlide(el, title, sub, bgUrl) {
               document.querySelectorAll('.cine-thumb').forEach(t => t.classList.remove('active'));
-              el.classList.add('active');
+              if(el) el.classList.add('active');
               const bg = document.getElementById('cineBgImg');
-              bg.style.opacity = 0;
-              setTimeout(() => {
-                bg.src = bgUrl;
-                bg.style.opacity = 0.6;
-              }, 300);
-              document.getElementById('cineTitle').innerText = title;
-              document.getElementById('cineSub').innerText = sub;
+              if(bg) {
+                bg.style.opacity = 0;
+                setTimeout(() => {
+                  bg.src = bgUrl;
+                  bg.style.opacity = 0.6;
+                }, 300);
+              }
+              const tEl = document.getElementById('cineTitle');
+              const sEl = document.getElementById('cineSub');
+              if(tEl) tEl.innerText = title;
+              if(sEl) sEl.innerText = sub;
             }
+
+            let cineAutoSlide;
+            function startCineAutoSlide() {
+              clearInterval(cineAutoSlide);
+              cineAutoSlide = setInterval(() => {
+                const thumbs = document.querySelectorAll('.cine-thumb');
+                if(!thumbs.length) return;
+                let activeIdx = 0;
+                thumbs.forEach((t, i) => { if(t.classList.contains('active')) activeIdx = i; });
+                let nextIdx = (activeIdx + 1) % thumbs.length;
+                thumbs[nextIdx].click();
+              }, 5000);
+            }
+            startCineAutoSlide();
+
+            // Pause on hover
+            setTimeout(() => {
+              const carousel = document.querySelector('.cine-carousel');
+              if(carousel) {
+                carousel.addEventListener('mouseenter', () => clearInterval(cineAutoSlide));
+                carousel.addEventListener('mouseleave', startCineAutoSlide);
+              }
+            }, 1000);
           </script>
         </section>
         <!-- Top Favorites Section (Hidden until logged in) -->

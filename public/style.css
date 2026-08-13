@@ -1304,6 +1304,10 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   .toast { bottom: calc(var(--player-h) + 70px + env(safe-area-inset-bottom)); }
   .hero-section { padding: 18px 18px 18px; }
   .curated-section { padding: 0 18px 28px; }
+  .cinematic-hero-section {
+    height: calc(100dvh - 60px);
+    margin-bottom: calc((var(--player-h) + 60px) * -1);
+  }
   .curated-grid { grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 11px; }
   .inner-view-header { padding: 17px 18px 13px; }
   .inner-view-body { padding: 0 18px; }

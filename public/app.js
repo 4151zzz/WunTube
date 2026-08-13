@@ -54,11 +54,6 @@ const npCloseBtn          = document.getElementById('npCloseBtn');
 const tabQueue            = document.getElementById('tabQueue');
 const tabRelated          = document.getElementById('tabRelated');
 
-// NP Video
-const npVideoWrap         = document.getElementById('npVideoWrap');
-const npVideoToggleBtn    = document.getElementById('npVideoToggleBtn');
-const npVideoToggleIconVideo = document.getElementById('npVideoToggleIconVideo');
-const npVideoToggleIconArt   = document.getElementById('npVideoToggleIconArt');
 
 // Playlist
 const playlistModal       = document.getElementById('playlistModal');
@@ -143,94 +138,7 @@ let pendingPlaylistTrack = null;
 let toastTimer     = null;
 let currentUser    = null;
 let isRegisterMode = false;
-let isVideoMode    = false;
 
-
-// ── YouTube IFrame Video Player ───────────────────────────────────────
-let ytPlayer        = null;
-let ytApiReady      = false;
-let ytPendingVideoId = null;
-
-// Called by YouTube IFrame API when it is ready
-window.onYouTubeIframeAPIReady = function () {
-  ytApiReady = true;
-  if (ytPendingVideoId) {
-    _loadYTVideo(ytPendingVideoId);
-    ytPendingVideoId = null;
-  }
-};
-
-function _loadYTVideo(videoId) {
-  if (ytPlayer) {
-    // Reuse existing player — just cue a new video (stays muted, loops)
-    ytPlayer.cueVideoById({ videoId, startSeconds: 0 });
-    // Auto-play video visually after cue
-    setTimeout(() => { try { ytPlayer.playVideo(); } catch(e){} }, 400);
-    return;
-  }
-
-  // Create fresh player in #npYTPlayer div
-  ytPlayer = new YT.Player('npYTPlayer', {
-    videoId,
-    playerVars: {
-      autoplay: 1,
-      mute:     1,
-      controls: 0,
-      loop:     1,
-      playlist: videoId, // required for loop
-      playsinline: 1,
-      rel:      0,
-      modestbranding: 1,
-      fs:       0,
-      disablekb: 1,
-      iv_load_policy: 3,
-    },
-    events: {
-      onReady(e) {
-        e.target.mute();
-        e.target.playVideo();
-        npVideoWrap.classList.remove('loading');
-      },
-      onStateChange(e) {
-        // Keep looping
-        if (e.data === YT.PlayerState.ENDED) e.target.playVideo();
-      },
-    },
-  });
-}
-
-function startVideoMode(videoId) {
-  if (!isVideoMode) return; // toggle not active
-  npVideoWrap.classList.remove('hidden');
-  npVideoWrap.classList.add('loading');
-
-  if (!ytApiReady) {
-    ytPendingVideoId = videoId; // will be triggered once API loads
-    return;
-  }
-  _loadYTVideo(videoId);
-}
-
-function stopVideoMode() {
-  npVideoWrap.classList.add('hidden');
-  if (ytPlayer) {
-    try { ytPlayer.pauseVideo(); } catch(e){}
-  }
-}
-
-// Toggle artwork ↔ video
-npVideoToggleBtn.addEventListener('click', () => {
-  isVideoMode = !isVideoMode;
-  npVideoToggleBtn.classList.toggle('video-mode', isVideoMode);
-  npVideoToggleIconVideo.classList.toggle('hidden', isVideoMode);
-  npVideoToggleIconArt.classList.toggle('hidden', !isVideoMode);
-
-  if (isVideoMode && currentTrack) {
-    startVideoMode(currentTrack.videoId);
-  } else {
-    stopVideoMode();
-  }
-});
 
 // ── Playlists (localStorage) ─────────────────────────────────────────
 let playlists = JSON.parse(localStorage.getItem('wuntube_playlists') || '[]');
@@ -661,13 +569,6 @@ function loadAndPlay(track) {
   npArtwork.src = thumb;
   npBgBlur.style.backgroundImage = `url('${thumb}')`;
 
-  // Show video toggle button (requires a track to be loaded)
-  npVideoToggleBtn.classList.remove('hidden');
-
-  // Sync YT video if video mode is active
-  if (isVideoMode) {
-    startVideoMode(track.videoId);
-  }
 
   setPlayerState('loading');
 

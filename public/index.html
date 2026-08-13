@@ -15,7 +15,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
   <!-- YouTube IFrame API -->
-  <script src="https://www.youtube.com/iframe_api"></script>
+
 </head>
 <body>
 
@@ -47,28 +47,11 @@
       <!-- Left: artwork + controls -->
       <div class="np-left">
         <div class="np-artwork-wrap" id="npArtworkWrap">
-          <!-- Video / Artwork toggle -->
-          <div id="npVideoWrap" class="np-video-wrap hidden">
-            <div id="npYTPlayer"></div>
-            <div class="np-video-overlay"></div>
-          </div>
           <img id="npArtwork" class="np-artwork" src="" alt="album art" />
           <div class="np-artwork-glow" id="npArtworkGlow"></div>
           <div class="np-viz" id="npViz">
             <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
           </div>
-          <!-- Toggle button -->
-          <button id="npVideoToggleBtn" class="np-video-toggle-btn hidden" title="สลับวิดิโอ / Artwork">
-            <svg id="npVideoToggleIconVideo" viewBox="0 0 24 24" fill="none">
-              <rect x="2" y="4" width="20" height="16" rx="3" stroke="currentColor" stroke-width="2"/>
-              <polygon points="10 9 16 12 10 15 10 9" fill="currentColor"/>
-            </svg>
-            <svg id="npVideoToggleIconArt" viewBox="0 0 24 24" fill="none" class="hidden">
-              <rect x="3" y="3" width="18" height="18" rx="3" stroke="currentColor" stroke-width="2"/>
-              <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/>
-              <polyline points="21 15 16 10 5 21" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </button>
         </div>
 
         <div class="np-track-info">

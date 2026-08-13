@@ -360,28 +360,24 @@ app.get('/api/stream', (req, res) => {
 
   const url = `https://www.youtube.com/watch?v=${videoId}`;
   const ytDlp = getYtDlpPath();
-  const ffmpegDir = getFFmpegPath();
 
   console.log(`[stream] Starting stream for: ${videoId}`);
 
-  // Set headers for streaming audio playback
-  res.setHeader('Content-Type', 'audio/mpeg');
+  // Set headers for streaming audio playback (native opus = no conversion needed)
+  res.setHeader('Content-Type', 'audio/webm; codecs=opus');
   res.setHeader('Transfer-Encoding', 'chunked');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('X-Content-Type-Options', 'nosniff');
 
   const args = [
     url,
-    '-x',
-    '--audio-format', 'mp3',
-    '--audio-quality', '5',   // balance quality vs startup speed
+    '-f', 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio',
     '-o', '-',
     '--no-warnings',
     '--quiet',
     '--no-playlist',
     '--rm-cache-dir',
-    '--extractor-args', 'youtube:player_client=android',
-    ...(ffmpegDir ? ['--ffmpeg-location', ffmpegDir] : []),
+    '--extractor-args', 'youtube:player_client=web',
   ];
 
   const proc = spawn(ytDlp, args);
@@ -400,8 +396,8 @@ app.get('/api/stream', (req, res) => {
   });
 
   proc.on('close', (code) => {
-    if (code !== 0) console.warn(`[stream] yt-dlp exited with code ${code}`);
-    res.end();
+    if (code !== 0 && code !== null) console.warn(`[stream] yt-dlp exited with code ${code}`);
+    console.log(`[stream] Stream ended for: ${videoId}`);
   });
 
   req.on('close', () => {

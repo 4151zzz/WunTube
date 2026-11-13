@@ -125,9 +125,8 @@ $cineSlides = [
 
       <!-- Left: theater artwork + controls -->
       <div class="np-left">
-        <div class="np-artwork-wrap" id="npArtworkWrap">
+        <div class="np-artwork-wrap">
           <img id="npArtwork" class="np-artwork" src="" alt="thumbnail" />
-          <video id="npVideoEl" class="np-video-el hidden" playsinline preload="none" onclick="togglePlayPause()"></video>
           <div class="np-artwork-glow" id="npArtworkGlow"></div>
           <div class="np-viz" id="npViz">
             <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
@@ -144,10 +143,6 @@ $cineSlides = [
               <p id="npChannel" class="np-channel">—</p>
             </div>
             <div class="np-actions-row">
-              <button id="npBtnVideoMode" class="np-action-btn active" type="button" title="สลับโหมดดูวิดีโอ / ฟังเพลงอย่างเดียว">
-                <svg viewBox="0 0 24 24" fill="none"><rect x="2" y="5" width="20" height="14" rx="2" stroke="currentColor" stroke-width="2"/><polygon points="10 9 16 12 10 15 10 9" fill="currentColor"/></svg>
-                <span id="npVideoModeText">โหมดวิดีโอ</span>
-              </button>
               <button id="npBtnPlaylist" class="np-action-btn" title="เพิ่มใน Playlist">
                 <svg viewBox="0 0 24 24" fill="none"><line x1="8" y1="6" x2="21" y2="6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="8" y1="12" x2="21" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="8" y1="18" x2="16" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="3" y1="6" x2="3.01" y2="6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="3" y1="12" x2="3.01" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="3" y1="18" x2="3.01" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
                 <span>บันทึก</span>

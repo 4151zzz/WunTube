@@ -7,9 +7,6 @@ const API = (window.WUNTUBE_CONFIG && window.WUNTUBE_CONFIG.apiBase) || '/api';
 
 // ── DOM refs ─────────────────────────────────────────────────────────
 const audio           = document.getElementById('globalAudio');
-const videoEl         = document.getElementById('npVideoEl');
-const ytFallbackHost  = document.getElementById('ytFallbackHost');
-const npArtworkWrap   = document.getElementById('npArtworkWrap');
 const playerBar       = document.getElementById('playerBar');
 const playerBodyClick = document.getElementById('playerBodyClick');
 const btnPlay         = document.getElementById('btnPlay');
@@ -45,8 +42,6 @@ const npBtnPrev       = document.getElementById('npBtnPrev');
 const npBtnNext       = document.getElementById('npBtnNext');
 const npBtnLoop       = document.getElementById('npBtnLoop');
 const npBtnShuffle    = document.getElementById('npBtnShuffle');
-const npBtnVideoMode  = document.getElementById('npBtnVideoMode');
-const npVideoModeText = document.getElementById('npVideoModeText');
 const npBtnPlaylist   = document.getElementById('npBtnPlaylist');
 const npBtnDownload   = document.getElementById('npBtnDownload');
 const npIconPlay      = document.getElementById('npIconPlay');
@@ -140,7 +135,6 @@ let currentTrack   = null;
 let queue          = [];
 let isLoopOn       = false;
 let isShuffleOn    = false;
-let isVideoMode    = localStorage.getItem('wuntube_video_mode') !== '0';
 let isAutoplayRelated = localStorage.getItem('wuntube_autoplay') !== '0';
 let isSeeking      = false;
 let currentResults = [];
@@ -894,63 +888,11 @@ async function playViaYouTubeFallback(track) {
   }
 }
 
-function getActiveMediaEl() {
-  return (isVideoMode && videoEl) ? videoEl : audio;
-}
-
-function stopMediaElement(el) {
-  if (!el) return;
-  try { el.pause(); } catch (_) {}
-  if (el.getAttribute('src')) {
-    el.removeAttribute('src');
-    try { el.load(); } catch (_) {}
-  }
-}
-
-function syncYtOverlayPosition() {
-  if (!ytFallbackHost) return;
-  const shouldShowStage = useYtFallback && isVideoMode && nowPlayingPanel && !nowPlayingPanel.classList.contains('hidden') && npArtworkWrap;
-  if (!shouldShowStage) {
-    ytFallbackHost.classList.remove('stage-active');
-    ytFallbackHost.style.left = '';
-    ytFallbackHost.style.top = '';
-    ytFallbackHost.style.width = '';
-    ytFallbackHost.style.height = '';
-    return;
-  }
-  const rect = npArtworkWrap.getBoundingClientRect();
-  if (rect.width < 20 || rect.height < 20) return;
-  ytFallbackHost.classList.add('stage-active');
-  ytFallbackHost.style.left = `${rect.left}px`;
-  ytFallbackHost.style.top = `${rect.top}px`;
-  ytFallbackHost.style.width = `${rect.width}px`;
-  ytFallbackHost.style.height = `${rect.height}px`;
-}
-
-function syncVideoStageUI() {
-  if (npBtnVideoMode) {
-    npBtnVideoMode.classList.toggle('active', isVideoMode);
-  }
-  if (npVideoModeText) {
-    npVideoModeText.textContent = isVideoMode ? 'โหมดวิดีโอ' : 'โหมดฟังเพลง';
-  }
-  if (videoEl) {
-    const showHtmlVideo = isVideoMode && !useYtFallback;
-    videoEl.classList.toggle('hidden', !showHtmlVideo);
-  }
-  syncYtOverlayPosition();
-}
-
 function playTrack(track) {
   if (typeof track === 'string') track = JSON.parse(track);
 
   if (currentTrack?.videoId === track.videoId) {
-    if (isVideoMode && nowPlayingPanel.classList.contains('hidden')) {
-      openNowPlaying();
-      if (isActivePlayerPaused()) togglePlayPause();
-    } else {
-      togglePlayPause();
-    }
+    togglePlayPause();
     return;
   }
   currentTrack = track;
@@ -958,75 +900,7 @@ function playTrack(track) {
   // Add to queue if not already there
   if (!queue.find(t => t.videoId === track.videoId)) queue.push(track);
   updateQueueBadge();
-  if (isVideoMode && nowPlayingPanel.classList.contains('hidden')) {
-    openNowPlaying();
-  }
   loadAndPlay(track);
-}
-
-function loadStreamOnMedia(mediaEl, track, streamType, resumeAt = 0, allowVideoFallbackToAudio = true) {
-  const targetId = track.videoId;
-  const inactiveEl = mediaEl === videoEl ? audio : videoEl;
-  stopMediaElement(inactiveEl);
-
-  mediaEl.volume = Number(volumeSlider.value || 100) / 100;
-  mediaEl.src = `${API}/stream?videoId=${encodeURIComponent(track.videoId)}&type=${streamType}`;
-  mediaEl.load();
-
-  let seekApplied = false;
-  const onCanPlay = () => {
-    mediaEl.removeEventListener('canplay', onCanPlay);
-    if (useYtFallback || currentTrack?.videoId !== targetId || mediaEl !== getActiveMediaEl()) return;
-    if (resumeAt > 0 && !seekApplied) {
-      seekApplied = true;
-      try { mediaEl.currentTime = resumeAt; } catch (_) {}
-    }
-    mediaEl.play().catch(err => {
-      console.error('Play failed for videoId ' + track.videoId + ':', err);
-      if (err.name === 'AbortError') return;
-      if (err.name === 'NotAllowedError') {
-        setPlayerState('paused');
-        showBriefToast('⏸ กดปุ่ม ▶ เพื่อเริ่มเล่น');
-      } else {
-        setPlayerState('paused');
-        if (++consecutiveAudioErrors <= 2) setTimeout(() => autoplayNext(), 1500);
-      }
-    });
-  };
-  mediaEl.addEventListener('canplay', onCanPlay);
-
-  const onError = async () => {
-    mediaEl.removeEventListener('canplay', onCanPlay);
-    mediaEl.removeEventListener('error', onError);
-    if (useYtFallback || currentTrack?.videoId !== targetId || mediaEl !== getActiveMediaEl()) return;
-    setPlayerState('paused');
-
-    try {
-      const probe = await fetch(`${API}/stream?videoId=${encodeURIComponent(targetId)}&type=${streamType}`, { method: 'GET' });
-      if (probe.status === 503) {
-        serverHasYtDlp = false;
-        playViaYouTubeFallback(track);
-        syncVideoStageUI();
-        return;
-      }
-    } catch (_) {}
-
-    // If MP4 progressive video failed, fall back to audio-only stream or YouTube IFrame player
-    if (streamType === 'video' && allowVideoFallbackToAudio) {
-      console.warn('[video] Progressive MP4 unavailable, falling back to audio/YouTube stream:', targetId);
-      loadStreamOnMedia(audio, track, 'audio', resumeAt, false);
-      if (videoEl) videoEl.classList.add('hidden');
-      return;
-    }
-
-    console.error('[media] Error loading track:', track.videoId);
-    if (++consecutiveAudioErrors <= 2) {
-      setTimeout(() => autoplayNext(), 1500);
-    } else {
-      showBriefToast('⚠️ ไม่สามารถเล่นวิดีโอนี้ได้');
-    }
-  };
-  mediaEl.addEventListener('error', onError, { once: true });
 }
 
 async function loadAndPlay(track) {
@@ -1077,10 +951,10 @@ async function loadAndPlay(track) {
   if (currentTrack?.videoId !== track.videoId) return;
 
   if (serverHasYtDlp === false) {
-    stopMediaElement(audio);
-    stopMediaElement(videoEl);
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.load();
     playViaYouTubeFallback(track);
-    syncVideoStageUI();
     return;
   }
 
@@ -1090,30 +964,67 @@ async function loadAndPlay(track) {
     try { ytPlayer.pauseVideo(); } catch (_) {}
   }
 
-  syncVideoStageUI();
-  loadStreamOnMedia(getActiveMediaEl(), track, isVideoMode ? 'video' : 'audio');
+  const targetId = track.videoId;
+  audio.src = `${API}/stream?videoId=${encodeURIComponent(track.videoId)}`;
+  audio.load();
+
+  const onCanPlay = () => {
+    audio.removeEventListener('canplay', onCanPlay);
+    if (useYtFallback || currentTrack?.videoId !== targetId) return;
+    audio.play().catch(err => {
+      console.error('Play failed for videoId ' + track.videoId + ':', err);
+      if (err.name === 'AbortError') return;
+      if (err.name === 'NotAllowedError') {
+        setPlayerState('paused');
+        showBriefToast('⏸ กดปุ่ม ▶ เพื่อเริ่มเล่น');
+      } else {
+        setPlayerState('paused');
+        if (++consecutiveAudioErrors <= 2) setTimeout(() => autoplayNext(), 1500);
+      }
+    });
+  };
+  audio.addEventListener('canplay', onCanPlay);
+
+  audio.addEventListener('error', async () => {
+    audio.removeEventListener('canplay', onCanPlay);
+    if (useYtFallback || currentTrack?.videoId !== targetId) return;
+    setPlayerState('paused');
+    try {
+      const probe = await fetch(`${API}/stream?videoId=${encodeURIComponent(targetId)}`, { method: 'GET' });
+      if (probe.status === 503) {
+        serverHasYtDlp = false;
+        playViaYouTubeFallback(track);
+        return;
+      }
+    } catch (_) {}
+    console.error('[audio] Error loading track:', track.videoId);
+    if (++consecutiveAudioErrors <= 2) {
+      setTimeout(() => autoplayNext(), 1500);
+    } else {
+      showBriefToast('⚠️ ไม่สามารถโหลดเสียงเพลงนี้ได้');
+    }
+  }, { once: true });
 }
 
 function getActiveDuration() {
   if (useYtFallback && ytPlayer && typeof ytPlayer.getDuration === 'function') {
     return ytPlayer.getDuration() || 0;
   }
-  return getActiveMediaEl()?.duration || 0;
+  return audio.duration || 0;
 }
 
 function getActiveCurrentTime() {
   if (useYtFallback && ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
     return ytPlayer.getCurrentTime() || 0;
   }
-  return getActiveMediaEl()?.currentTime || 0;
+  return audio.currentTime || 0;
 }
 
 function seekActivePlayer(seconds) {
   if (useYtFallback && ytPlayer && typeof ytPlayer.seekTo === 'function') {
     ytPlayer.seekTo(seconds, true);
   } else {
-    const el = getActiveMediaEl();
-    if (el) el.currentTime = seconds;
+    audio.currentTime = seconds;
   }
 }
 
@@ -1121,7 +1032,7 @@ function isActivePlayerPaused() {
   if (useYtFallback && ytPlayer && typeof ytPlayer.getPlayerState === 'function') {
     return ytPlayer.getPlayerState() !== 1;
   }
-  return getActiveMediaEl()?.paused ?? true;
+  return audio.paused;
 }
 
 function togglePlayPause() {
@@ -1130,60 +1041,44 @@ function togglePlayPause() {
     isActivePlayerPaused() ? ytPlayer.playVideo() : ytPlayer.pauseVideo();
     return;
   }
-  const el = getActiveMediaEl();
-  if (!el) return;
-  if (!el.getAttribute('src')) {
-    loadStreamOnMedia(el, currentTrack, isVideoMode ? 'video' : 'audio');
-    return;
-  }
-  el.paused ? el.play().catch(console.error) : el.pause();
+  audio.paused ? audio.play().catch(console.error) : audio.pause();
 }
 
-// ── Media Element Events (shared for Audio & Video) ───────────────────
-function attachMediaEvents(el) {
-  if (!el) return;
-  el.addEventListener('playing', () => {
-    if (useYtFallback || el !== getActiveMediaEl()) return;
-    consecutiveAudioErrors = 0;
-    setPlayerState('playing');
-    artworkViz.classList.add('active');
-    npViz.classList.add('active');
-    bgPlayBadge.classList.remove('hidden');
-    updateMediaSessionState('playing');
-  });
-  el.addEventListener('pause', () => {
-    if (useYtFallback || el !== getActiveMediaEl()) return;
-    setPlayerState('paused');
-    artworkViz.classList.remove('active');
-    npViz.classList.remove('active');
-    updateMediaSessionState('paused');
-  });
-  el.addEventListener('waiting', () => {
-    if (!useYtFallback && el === getActiveMediaEl()) setPlayerState('loading');
-  });
-  el.addEventListener('canplay', () => {
-    if (!useYtFallback && el === getActiveMediaEl() && !el.paused) setPlayerState('playing');
-  });
-  el.addEventListener('ended', () => {
-    if (useYtFallback || el !== getActiveMediaEl()) return;
-    artworkViz.classList.remove('active');
-    npViz.classList.remove('active');
-    if (isLoopOn) { loadAndPlay(currentTrack); }
-    else { autoplayNext(); }
-  });
-  el.addEventListener('timeupdate', () => {
-    if (useYtFallback || el !== getActiveMediaEl() || isSeeking || !el.duration) return;
-    const pct = (el.currentTime / el.duration) * 100;
-    progressFill.style.width = `${pct}%`;
-    npProgressFill.style.width = `${pct}%`;
-    npProgressThumb.style.setProperty('--pct', `${pct}%`);
-    npTimeCurrent.textContent = formatTime(el.currentTime);
-    npTimeDuration.textContent = formatTime(el.duration);
-  });
-}
-
-attachMediaEvents(audio);
-attachMediaEvents(videoEl);
+// ── Audio Events ──────────────────────────────────────────────────────
+audio.addEventListener('playing', () => {
+  if (useYtFallback) return;
+  consecutiveAudioErrors = 0;
+  setPlayerState('playing');
+  artworkViz.classList.add('active');
+  npViz.classList.add('active');
+  bgPlayBadge.classList.remove('hidden');
+  updateMediaSessionState('playing');
+});
+audio.addEventListener('pause', () => {
+  if (useYtFallback) return;
+  setPlayerState('paused');
+  artworkViz.classList.remove('active');
+  npViz.classList.remove('active');
+  updateMediaSessionState('paused');
+});
+audio.addEventListener('waiting', () => { if (!useYtFallback) setPlayerState('loading'); });
+audio.addEventListener('canplay', () => { if (!useYtFallback && !audio.paused) setPlayerState('playing'); });
+audio.addEventListener('ended', () => {
+  if (useYtFallback) return;
+  artworkViz.classList.remove('active');
+  npViz.classList.remove('active');
+  if (isLoopOn) { loadAndPlay(currentTrack); }
+  else { autoplayNext(); }
+});
+audio.addEventListener('timeupdate', () => {
+  if (useYtFallback || isSeeking || !audio.duration) return;
+  const pct = (audio.currentTime / audio.duration) * 100;
+  progressFill.style.width = `${pct}%`;
+  npProgressFill.style.width = `${pct}%`;
+  npProgressThumb.style.setProperty('--pct', `${pct}%`);
+  npTimeCurrent.textContent = formatTime(audio.currentTime);
+  npTimeDuration.textContent = formatTime(audio.duration);
+});
 
 async function pickNextRecommendedTrack() {
   const queuedIds = new Set(queue.map(t => t.videoId));
@@ -1299,14 +1194,12 @@ npBtnShuffle.addEventListener('click', () => {
 function applyVolume(val) {
   const num = Number(val);
   audio.volume = num / 100;
-  if (videoEl) videoEl.volume = num / 100;
   if (ytPlayer && typeof ytPlayer.setVolume === 'function') {
     ytPlayer.setVolume(num);
   }
 }
 volumeSlider.addEventListener('input', () => { applyVolume(volumeSlider.value); npVolumeSlider.value = volumeSlider.value; });
 npVolumeSlider.addEventListener('input', () => { applyVolume(npVolumeSlider.value); volumeSlider.value = npVolumeSlider.value; });
-if (videoEl) videoEl.volume = Number(volumeSlider.value) / 100;
 
 // ── Player State ──────────────────────────────────────────────────────
 function setPlayerState(state) {
@@ -1320,36 +1213,6 @@ function setPlayerState(state) {
   else { iconPlay.classList.remove('hidden'); npIconPlay.classList.remove('hidden'); }
 }
 
-// ── Video / Audio Stage Mode Toggle ───────────────────────────────────
-function toggleVideoMode() {
-  isVideoMode = !isVideoMode;
-  localStorage.setItem('wuntube_video_mode', isVideoMode ? '1' : '0');
-  syncVideoStageUI();
-  showBriefToast(isVideoMode ? '🎬 เปิดโหมดเล่นวิดีโอแล้ว' : '🎵 เปลี่ยนเป็นโหมดฟังเพลงแล้ว');
-
-  if (currentTrack && !useYtFallback) {
-    const prevEl = isVideoMode ? audio : videoEl;
-    const nextEl = getActiveMediaEl();
-    const curTime = prevEl ? (prevEl.currentTime || 0) : 0;
-    const wasPaused = prevEl ? prevEl.paused : true;
-    stopMediaElement(prevEl);
-    if (!wasPaused) {
-      loadStreamOnMedia(nextEl, currentTrack, isVideoMode ? 'video' : 'audio', curTime, true);
-    }
-  }
-}
-
-if (npBtnVideoMode) {
-  npBtnVideoMode.addEventListener('click', toggleVideoMode);
-}
-syncVideoStageUI();
-
-// Keep YouTube video overlay aligned with #npArtworkWrap
-window.addEventListener('resize', syncYtOverlayPosition);
-if (typeof ResizeObserver !== 'undefined' && npArtworkWrap) {
-  new ResizeObserver(syncYtOverlayPosition).observe(npArtworkWrap);
-}
-
 // ── Now Playing Panel ─────────────────────────────────────────────────
 // Click on player body (not controls) → open NP panel
 playerBodyClick.addEventListener('click', (e) => {
@@ -1361,25 +1224,14 @@ function openNowPlaying() {
   nowPlayingPanel.classList.remove('hidden');
   document.body.style.overflow = 'hidden';
   renderNpQueue();
-  syncVideoStageUI();
-  requestAnimationFrame(syncYtOverlayPosition);
-  setTimeout(syncYtOverlayPosition, 320);
 }
 
 function closeNowPlaying() {
-  if (ytFallbackHost) {
-    ytFallbackHost.classList.remove('stage-active');
-    ytFallbackHost.style.top = '';
-    ytFallbackHost.style.left = '';
-    ytFallbackHost.style.width = '';
-    ytFallbackHost.style.height = '';
-  }
   nowPlayingPanel.classList.add('closing');
   setTimeout(() => {
     nowPlayingPanel.classList.add('hidden');
     nowPlayingPanel.classList.remove('closing');
     document.body.style.overflow = '';
-    syncYtOverlayPosition();
   }, 300);
 }
 

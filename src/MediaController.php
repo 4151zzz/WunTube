@@ -284,13 +284,12 @@ final class MediaController
     }
 
     /**
-     * GET /api/stream?videoId=xxx&type=audio|video
-     * Redirects browser directly to the YouTube CDN audio or MP4 video stream URL.
+     * GET /api/stream?videoId=xxx
+     * Redirects browser directly to the YouTube CDN audio stream URL.
      */
     public function stream(): never
     {
         $videoId = trim((string) ($_GET['videoId'] ?? ''));
-        $type = strtolower(trim((string) ($_GET['type'] ?? 'audio')));
         if ($videoId === '') {
             Http::json(['error' => 'Missing videoId'], 400);
         }
@@ -307,15 +306,11 @@ final class MediaController
 
         @set_time_limit(0);
 
-        $formatSelector = $type === 'video'
-            ? 'best[ext=mp4][vcodec!=none][acodec!=none]/best[vcodec!=none][acodec!=none]'
-            : 'bestaudio/best';
-
         $ytDlp = BinaryFinder::getYtDlpPath();
         $args = array_merge([
             $ytDlp,
             "https://www.youtube.com/watch?v={$videoId}",
-            '-f', $formatSelector,
+            '-f', 'bestaudio/best',
             '-g',
             '--no-warnings',
             '--no-playlist',

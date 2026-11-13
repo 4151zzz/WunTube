@@ -3,10 +3,13 @@
    Now Playing Panel · Playlists · Queue · Autoplay · Media Session
    ═══════════════════════════════════════════════════════════════════ */
 
-const API = '/api';
+const API = (window.WUNTUBE_CONFIG && window.WUNTUBE_CONFIG.apiBase) || '/api';
 
 // ── DOM refs ─────────────────────────────────────────────────────────
 const audio           = document.getElementById('globalAudio');
+const videoEl         = document.getElementById('npVideoEl');
+const ytFallbackHost  = document.getElementById('ytFallbackHost');
+const npArtworkWrap   = document.getElementById('npArtworkWrap');
 const playerBar       = document.getElementById('playerBar');
 const playerBodyClick = document.getElementById('playerBodyClick');
 const btnPlay         = document.getElementById('btnPlay');
@@ -42,6 +45,8 @@ const npBtnPrev       = document.getElementById('npBtnPrev');
 const npBtnNext       = document.getElementById('npBtnNext');
 const npBtnLoop       = document.getElementById('npBtnLoop');
 const npBtnShuffle    = document.getElementById('npBtnShuffle');
+const npBtnVideoMode  = document.getElementById('npBtnVideoMode');
+const npVideoModeText = document.getElementById('npVideoModeText');
 const npBtnPlaylist   = document.getElementById('npBtnPlaylist');
 const npBtnDownload   = document.getElementById('npBtnDownload');
 const npIconPlay      = document.getElementById('npIconPlay');
@@ -53,6 +58,11 @@ const npRelatedList   = document.getElementById('npRelatedList');
 const npCloseBtn          = document.getElementById('npCloseBtn');
 const tabQueue            = document.getElementById('tabQueue');
 const tabRelated          = document.getElementById('tabRelated');
+const npBtnAutoplay       = document.getElementById('npBtnAutoplay');
+const recommendedSection  = document.getElementById('recommendedSection');
+const recommendedSubtitle = document.getElementById('recommendedSubtitle');
+const recommendedGrid     = document.getElementById('recommendedGrid');
+const refreshRecBtn       = document.getElementById('refreshRecommendationsBtn');
 
 
 // Playlist
@@ -118,6 +128,7 @@ const authSwitchPrompt = document.getElementById('authSwitchPrompt');
 const authSwitchBtn  = document.getElementById('authSwitchBtn');
 const bNavAuth       = document.getElementById('bNavAuth');
 const bNavLoginText  = document.getElementById('bNavLoginText');
+const headerSignInBtn = document.getElementById('headerSignInBtn');
 const userAvatarBtn  = document.getElementById('userAvatarBtn');
 const userAvatarText = document.getElementById('userAvatarText');
 const bottomNav      = document.getElementById('bottomNav');
@@ -129,8 +140,14 @@ let currentTrack   = null;
 let queue          = [];
 let isLoopOn       = false;
 let isShuffleOn    = false;
+let isVideoMode    = localStorage.getItem('wuntube_video_mode') !== '0';
+let isAutoplayRelated = localStorage.getItem('wuntube_autoplay') !== '0';
 let isSeeking      = false;
 let currentResults = [];
+let upNextRecommendations = [];
+let homeRecommendations = [];
+let recentTracks   = JSON.parse(localStorage.getItem('wuntube_recent_tracks') || '[]');
+const playedSessionIds = new Set();
 let activeView     = 'home';
 let currentPlaylistId = null;
 let npActiveTab    = 'queue';
@@ -138,6 +155,17 @@ let pendingPlaylistTrack = null;
 let toastTimer     = null;
 let currentUser    = null;
 let isRegisterMode = false;
+let serverHasYtDlp = null;
+let useYtFallback  = false;
+let ytPlayer       = null;
+let ytApiPromise   = null;
+let ytProgressTimer = null;
+let ytPendingTrack = null;
+let ytFallbackNotified = false;
+let consecutiveAudioErrors = 0;
+let recFetchController = null;
+let capabilitiesResolve = null;
+const capabilitiesPromise = new Promise(resolve => { capabilitiesResolve = resolve; });
 
 
 // ── Playlists (localStorage) ─────────────────────────────────────────
@@ -392,11 +420,29 @@ npBtnPlaylist.addEventListener('click', () => { if (currentTrack) openPlaylistMo
 npBtnDownload.addEventListener('click', () => { if (currentTrack) downloadTrack(currentTrack.videoId, currentTrack.title); });
 
 // ── Sidebar toggle ────────────────────────────────────────────────────
-menuBtn.addEventListener('click', openSidebar);
+menuBtn.addEventListener('click', () => {
+  if (window.innerWidth > 768) {
+    document.body.classList.toggle('guide-collapsed');
+  } else if (sidebar.classList.contains('open')) {
+    closeSidebar();
+  } else {
+    openSidebar();
+  }
+});
 sidebarCloseBtn.addEventListener('click', closeSidebar);
 sidebarOverlay.addEventListener('click', closeSidebar);
 function openSidebar() { sidebar.classList.add('open'); sidebarOverlay.classList.add('open'); }
 function closeSidebar() { sidebar.classList.remove('open'); sidebarOverlay.classList.remove('open'); }
+
+function scrollToRecommended(e) {
+  if (e) e.preventDefault();
+  showView('home');
+  closeSidebar();
+  setTimeout(() => {
+    const el = document.getElementById('recommendedSection');
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 60);
+}
 
 // ── Search ────────────────────────────────────────────────────────────
 searchForm.addEventListener('submit', (e) => {
@@ -411,6 +457,18 @@ searchFormPage.addEventListener('submit', (e) => {
   const q = searchInputPage.value.trim();
   if (q) performSearch(q);
 });
+
+function selectCategoryChip(el, query) {
+  document.querySelectorAll('.yt-chip').forEach(c => c.classList.remove('active'));
+  if (el) el.classList.add('active');
+  if (!query) {
+    if (activeView !== 'home') showView('home');
+    fetchHomeRecommendations(true);
+    return;
+  }
+  searchInput.value = query;
+  performSearch(query);
+}
 
 function quickSearch(el) {
   const text = el.textContent.replace(/^[\p{Emoji}\s]+/u, '').trim();
@@ -460,10 +518,25 @@ function renderResults(query, results) {
   searchResultsMeta.classList.remove('hidden');
   results.forEach((item, i) => resultsGrid.appendChild(createTrackRow(item, i)));
   if (currentTrack) highlightPlayingCard(currentTrack.videoId);
-  renderNpRelated(results);
+  if (!upNextRecommendations.length) {
+    renderNpRelated(results);
+  }
 }
 
-// ── Track Row (new search result style) ──────────────────────────────
+const YT_AVATAR_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
+
+function getChannelAvatarHtml(channelName) {
+  const name = (channelName || 'Y').trim();
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0;
+  }
+  const color = YT_AVATAR_COLORS[Math.abs(hash) % YT_AVATAR_COLORS.length];
+  const initial = Array.from(name)[0]?.toUpperCase() || 'Y';
+  return `<span class="yt-ch-avatar" style="background:${color}" aria-hidden="true">${esc(initial)}</span>`;
+}
+
+// ── Track Row (YouTube search result style) ───────────────────────────
 function createTrackRow(item, index) {
   const row = document.createElement('div');
   row.className = 'track-row' + (currentTrack?.videoId === item.videoId ? ' playing' : '');
@@ -471,16 +544,22 @@ function createTrackRow(item, index) {
   row.style.animationDelay = `${Math.min(index * 0.03, 0.6)}s`;
   const thumb = item.thumbnail || `https://img.youtube.com/vi/${item.videoId}/hqdefault.jpg`;
   const isPlaying = currentTrack?.videoId === item.videoId;
+  const durHtml = (item.duration && item.duration !== 'N/A')
+    ? `<span class="track-thumb-dur">${esc(item.duration)}</span>`
+    : '';
   row.innerHTML = `
     <span class="track-num">${index + 1}</span>
     <div class="track-eq"><span></span><span></span><span></span></div>
-    <img class="track-thumb" src="${esc(thumb)}" alt=""
-         onerror="this.src='https://img.youtube.com/vi/${esc(item.videoId)}/hqdefault.jpg'" loading="lazy"/>
+    <div class="track-thumb-wrap">
+      <img class="track-thumb" src="${esc(thumb)}" alt=""
+           onerror="this.src='https://img.youtube.com/vi/${esc(item.videoId)}/hqdefault.jpg'" loading="lazy"/>
+      ${durHtml}
+    </div>
     <div class="track-info">
       <div class="track-title" title="${esc(item.title)}">${esc(item.title)}</div>
       <div class="track-channel">
-        <svg viewBox="0 0 24 24" fill="none"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="7" r="4" stroke="currentColor" stroke-width="2"/></svg>
-        ${esc(item.channel)}
+        ${getChannelAvatarHtml(item.channel || 'YouTube')}
+        <span>${esc(item.channel || 'YouTube')}</span>
       </div>
     </div>
     ${item.duration ? `<span class="track-duration">${esc(item.duration)}</span>` : ''}
@@ -527,7 +606,7 @@ function createTrackRow(item, index) {
 function createCard(item, index) { return createTrackRow(item, index); }
 
 function highlightPlayingCard(videoId) {
-  document.querySelectorAll('.track-row.playing, .card.playing').forEach(c => {
+  document.querySelectorAll('.track-row.playing, .card.playing, .curated-card.playing').forEach(c => {
     c.classList.remove('playing');
     const btn = c.querySelector('.track-play-btn, .play-btn');
     if (btn) { btn.classList.remove('active'); const s = btn.querySelector('span'); if(s) s.textContent = 'เล่น'; }
@@ -539,28 +618,427 @@ function highlightPlayingCard(videoId) {
     if (btn) { btn.classList.add('active'); const s = btn.querySelector('span'); if(s) s.textContent = 'กำลังเล่น'; }
     card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
+  document.querySelectorAll(`.curated-card[data-videoid="${CSS.escape(videoId)}"]`).forEach(el => {
+    el.classList.add('playing');
+  });
 }
 
 
-// ── Play ─────────────────────────────────────────────────────────────
+// ── Play & Recommendations Engine ────────────────────────────────────
+function saveRecentTrack(track) {
+  if (!track || !track.videoId) return;
+  const entry = {
+    videoId: track.videoId,
+    title: track.title || '',
+    channel: track.channel || '',
+    duration: track.duration || '',
+    thumbnail: track.thumbnail || `https://img.youtube.com/vi/${track.videoId}/hqdefault.jpg`,
+  };
+  recentTracks = [entry, ...recentTracks.filter(t => t.videoId !== entry.videoId)].slice(0, 30);
+  localStorage.setItem('wuntube_recent_tracks', JSON.stringify(recentTracks));
+}
+
+function getExcludeIdList(extra = []) {
+  const ids = new Set(extra);
+  playedSessionIds.forEach(id => ids.add(id));
+  queue.slice(-20).forEach(t => { if (t?.videoId) ids.add(t.videoId); });
+  return Array.from(ids).slice(-35);
+}
+
+async function fetchUpNextRecommendations(track) {
+  if (!track?.videoId) return [];
+  if (recFetchController) recFetchController.abort();
+  recFetchController = new AbortController();
+
+  try {
+    const exclude = getExcludeIdList([track.videoId]).join(',');
+    const res = await fetch(
+      `${API}/recommendations?videoId=${encodeURIComponent(track.videoId)}&exclude=${encodeURIComponent(exclude)}`,
+      { signal: recFetchController.signal }
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    const list = Array.isArray(data.recommendations) ? data.recommendations : [];
+    upNextRecommendations = list;
+    renderNpRelated(upNextRecommendations);
+    return list;
+  } catch (err) {
+    if (err.name !== 'AbortError') console.warn('Recommendations fetch failed:', err);
+    return [];
+  }
+}
+
+async function fetchHomeRecommendations(forceRefresh = false) {
+  if (!recommendedGrid) return;
+  if (refreshRecBtn) refreshRecBtn.classList.add('spinning');
+
+  try {
+    const seeds = recentTracks.slice(0, 8).map(t => t.videoId).join(',');
+    const exclude = forceRefresh
+      ? homeRecommendations.map(t => t.videoId).slice(0, 20).join(',')
+      : '';
+    const headers = {};
+    const token = localStorage.getItem('wuntube_token');
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const url = `${API}/recommendations?seeds=${encodeURIComponent(seeds)}&exclude=${encodeURIComponent(exclude)}`;
+    const res = await fetch(url, { headers });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    homeRecommendations = Array.isArray(data.recommendations) ? data.recommendations : [];
+
+    if (recommendedSubtitle) {
+      recommendedSubtitle.textContent = data.source === 'personalized'
+        ? 'คัดสรรจากแนวเพลงที่คุณฟัง · เล่นต่อเนื่องหลากหลายศิลปิน'
+        : 'วิดีโอยอดนิยมบน YouTube · กดเล่นเพื่อปรับแต่งแนวเพลงของคุณ';
+    }
+
+    renderHomeRecommendations(homeRecommendations);
+  } catch (err) {
+    console.warn('Home recommendations failed:', err);
+    if (!homeRecommendations.length) {
+      recommendedGrid.innerHTML = '<div class="queue-empty" style="grid-column: 1 / -1; padding: 20px 0;">ไม่สามารถโหลดรายการแนะนำได้ในขณะนี้</div>';
+    }
+  } finally {
+    if (refreshRecBtn) refreshRecBtn.classList.remove('spinning');
+  }
+}
+
+function renderHomeRecommendations(tracks) {
+  if (!recommendedGrid) return;
+  recommendedGrid.innerHTML = '';
+
+  if (!tracks.length) {
+    recommendedGrid.innerHTML = '<div class="queue-empty" style="grid-column: 1 / -1; padding: 20px 0;">ยังไม่มีรายการแนะนำ — ลองค้นหาและฟังเพลงดูก่อน</div>';
+    return;
+  }
+
+  tracks.forEach((track) => {
+    const isPlaying = currentTrack?.videoId === track.videoId;
+    const card = document.createElement('div');
+    card.className = 'curated-card' + (isPlaying ? ' playing' : '');
+    card.dataset.videoid = track.videoId;
+
+    const thumb = track.thumbnail || `https://img.youtube.com/vi/${track.videoId}/hqdefault.jpg`;
+    const durBadge = (track.duration && track.duration !== 'N/A')
+      ? `<span class="curated-duration">${esc(track.duration)}</span>`
+      : '';
+
+    card.innerHTML = `
+      <div class="curated-thumb">
+        <img src="${esc(thumb)}" alt="" loading="lazy" onerror="this.src='https://img.youtube.com/vi/${esc(track.videoId)}/hqdefault.jpg'" />
+        ${durBadge}
+        <div class="curated-play-pill">
+          <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+        </div>
+      </div>
+      <div class="yt-card-body">
+        ${getChannelAvatarHtml(track.channel || 'YouTube')}
+        <div class="curated-info">
+          <p class="curated-title" title="${esc(track.title)}">${esc(track.title)}</p>
+          <div class="curated-meta-row">
+            <p class="curated-sub">${esc(track.channel || 'YouTube')}</p>
+            <button type="button" class="curated-q-btn" title="เพิ่มลงคิว">+ คิว</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    card.addEventListener('click', () => playTrack(track));
+    card.querySelector('.curated-q-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      addToQueue(track, true);
+    });
+    recommendedGrid.appendChild(card);
+  });
+}
+
+function updateAutoplayToggleUI() {
+  if (!npBtnAutoplay) return;
+  npBtnAutoplay.classList.toggle('active', isAutoplayRelated);
+  npBtnAutoplay.title = isAutoplayRelated
+    ? 'เล่นวิดีโอที่คุณอาจจะชอบอัตโนมัติ: เปิด'
+    : 'เล่นวิดีโอที่คุณอาจจะชอบอัตโนมัติ: ปิด';
+}
+
+if (npBtnAutoplay) {
+  updateAutoplayToggleUI();
+  npBtnAutoplay.addEventListener('click', () => {
+    isAutoplayRelated = !isAutoplayRelated;
+    localStorage.setItem('wuntube_autoplay', isAutoplayRelated ? '1' : '0');
+    updateAutoplayToggleUI();
+    showBriefToast(isAutoplayRelated ? '✨ เปิดเล่นวิดีโอแนะนำอัตโนมัติ' : '⏸ ปิดเล่นวิดีโอแนะนำอัตโนมัติ');
+  });
+}
+
+if (refreshRecBtn) {
+  refreshRecBtn.addEventListener('click', () => fetchHomeRecommendations(true));
+}
+
+function ensureYouTubeIframeAPI() {
+  if (ytApiPromise) return ytApiPromise;
+  ytApiPromise = new Promise((resolve) => {
+    if (window.YT && window.YT.Player) {
+      resolve(window.YT);
+      return;
+    }
+    const prevReady = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      if (typeof prevReady === 'function') prevReady();
+      resolve(window.YT);
+    };
+    const tag = document.createElement('script');
+    tag.src = 'https://www.youtube.com/iframe_api';
+    document.head.appendChild(tag);
+  });
+  return ytApiPromise;
+}
+
+function stopYtProgressTimer() {
+  if (ytProgressTimer) {
+    clearInterval(ytProgressTimer);
+    ytProgressTimer = null;
+  }
+}
+
+function startYtProgressTimer() {
+  stopYtProgressTimer();
+  ytProgressTimer = setInterval(() => {
+    if (!useYtFallback || isSeeking || !ytPlayer || typeof ytPlayer.getDuration !== 'function') return;
+    const dur = ytPlayer.getDuration() || 0;
+    const cur = ytPlayer.getCurrentTime() || 0;
+    if (!dur) return;
+    const pct = Math.min(100, (cur / dur) * 100);
+    progressFill.style.width = `${pct}%`;
+    npProgressFill.style.width = `${pct}%`;
+    npProgressThumb.style.setProperty('--pct', `${pct}%`);
+    npTimeCurrent.textContent = formatTime(cur);
+    npTimeDuration.textContent = formatTime(dur);
+  }, 400);
+}
+
+async function playViaYouTubeFallback(track) {
+  useYtFallback = true;
+  audio.pause();
+  if (!ytFallbackNotified) {
+    ytFallbackNotified = true;
+    showBriefToast('▶ เล่นผ่านโหมด YouTube Player (เซิร์ฟเวอร์ไม่มี yt-dlp)');
+  }
+
+  const YT = await ensureYouTubeIframeAPI();
+  if (currentTrack?.videoId !== track.videoId) return;
+
+  if (!ytPlayer) {
+    ytPendingTrack = track;
+    ytPlayer = new YT.Player('ytFallbackHost', {
+      height: '2',
+      width: '2',
+      videoId: track.videoId,
+      playerVars: {
+        autoplay: 1,
+        controls: 0,
+        disablekb: 1,
+        playsinline: 1,
+        rel: 0,
+      },
+      events: {
+        onReady: (ev) => {
+          ev.target.setVolume(Number(volumeSlider.value || 100));
+          if (ytPendingTrack) {
+            ev.target.loadVideoById(ytPendingTrack.videoId);
+            ytPendingTrack = null;
+          }
+        },
+        onStateChange: (ev) => {
+          if (!useYtFallback) return;
+          if (ev.data === YT.PlayerState.PLAYING) {
+            consecutiveAudioErrors = 0;
+            setPlayerState('playing');
+            artworkViz.classList.add('active');
+            npViz.classList.add('active');
+            bgPlayBadge.classList.remove('hidden');
+            updateMediaSessionState('playing');
+            startYtProgressTimer();
+          } else if (ev.data === YT.PlayerState.PAUSED) {
+            setPlayerState('paused');
+            artworkViz.classList.remove('active');
+            npViz.classList.remove('active');
+            updateMediaSessionState('paused');
+            stopYtProgressTimer();
+          } else if (ev.data === YT.PlayerState.BUFFERING) {
+            setPlayerState('loading');
+          } else if (ev.data === YT.PlayerState.ENDED) {
+            artworkViz.classList.remove('active');
+            npViz.classList.remove('active');
+            stopYtProgressTimer();
+            if (isLoopOn) { loadAndPlay(currentTrack); }
+            else { autoplayNext(); }
+          }
+        },
+        onError: () => {
+          if (!useYtFallback) return;
+          stopYtProgressTimer();
+          setPlayerState('paused');
+          consecutiveAudioErrors++;
+          if (consecutiveAudioErrors <= 2) {
+            setTimeout(() => autoplayNext(), 1200);
+          } else {
+            showBriefToast('⚠️ วิดีโอนี้ไม่สามารถเล่นแบบฝังได้ ลองเลือกเพลงอื่น');
+          }
+        },
+      },
+    });
+  } else if (typeof ytPlayer.loadVideoById === 'function') {
+    ytPlayer.setVolume(Number(volumeSlider.value || 100));
+    ytPlayer.loadVideoById(track.videoId);
+  }
+}
+
+function getActiveMediaEl() {
+  return (isVideoMode && videoEl) ? videoEl : audio;
+}
+
+function stopMediaElement(el) {
+  if (!el) return;
+  try { el.pause(); } catch (_) {}
+  if (el.getAttribute('src')) {
+    el.removeAttribute('src');
+    try { el.load(); } catch (_) {}
+  }
+}
+
+function syncYtOverlayPosition() {
+  if (!ytFallbackHost) return;
+  const shouldShowStage = useYtFallback && isVideoMode && nowPlayingPanel && !nowPlayingPanel.classList.contains('hidden') && npArtworkWrap;
+  if (!shouldShowStage) {
+    ytFallbackHost.classList.remove('stage-active');
+    ytFallbackHost.style.left = '';
+    ytFallbackHost.style.top = '';
+    ytFallbackHost.style.width = '';
+    ytFallbackHost.style.height = '';
+    return;
+  }
+  const rect = npArtworkWrap.getBoundingClientRect();
+  if (rect.width < 20 || rect.height < 20) return;
+  ytFallbackHost.classList.add('stage-active');
+  ytFallbackHost.style.left = `${rect.left}px`;
+  ytFallbackHost.style.top = `${rect.top}px`;
+  ytFallbackHost.style.width = `${rect.width}px`;
+  ytFallbackHost.style.height = `${rect.height}px`;
+}
+
+function syncVideoStageUI() {
+  if (npBtnVideoMode) {
+    npBtnVideoMode.classList.toggle('active', isVideoMode);
+  }
+  if (npVideoModeText) {
+    npVideoModeText.textContent = isVideoMode ? 'โหมดวิดีโอ' : 'โหมดฟังเพลง';
+  }
+  if (videoEl) {
+    const showHtmlVideo = isVideoMode && !useYtFallback;
+    videoEl.classList.toggle('hidden', !showHtmlVideo);
+  }
+  syncYtOverlayPosition();
+}
+
 function playTrack(track) {
   if (typeof track === 'string') track = JSON.parse(track);
 
-  if (currentTrack?.videoId === track.videoId) { togglePlayPause(); return; }
+  if (currentTrack?.videoId === track.videoId) {
+    if (isVideoMode && nowPlayingPanel.classList.contains('hidden')) {
+      openNowPlaying();
+      if (isActivePlayerPaused()) togglePlayPause();
+    } else {
+      togglePlayPause();
+    }
+    return;
+  }
   currentTrack = track;
+  consecutiveAudioErrors = 0;
   // Add to queue if not already there
   if (!queue.find(t => t.videoId === track.videoId)) queue.push(track);
   updateQueueBadge();
+  if (isVideoMode && nowPlayingPanel.classList.contains('hidden')) {
+    openNowPlaying();
+  }
   loadAndPlay(track);
 }
 
-function loadAndPlay(track) {
+function loadStreamOnMedia(mediaEl, track, streamType, resumeAt = 0, allowVideoFallbackToAudio = true) {
+  const targetId = track.videoId;
+  const inactiveEl = mediaEl === videoEl ? audio : videoEl;
+  stopMediaElement(inactiveEl);
+
+  mediaEl.volume = Number(volumeSlider.value || 100) / 100;
+  mediaEl.src = `${API}/stream?videoId=${encodeURIComponent(track.videoId)}&type=${streamType}`;
+  mediaEl.load();
+
+  let seekApplied = false;
+  const onCanPlay = () => {
+    mediaEl.removeEventListener('canplay', onCanPlay);
+    if (useYtFallback || currentTrack?.videoId !== targetId || mediaEl !== getActiveMediaEl()) return;
+    if (resumeAt > 0 && !seekApplied) {
+      seekApplied = true;
+      try { mediaEl.currentTime = resumeAt; } catch (_) {}
+    }
+    mediaEl.play().catch(err => {
+      console.error('Play failed for videoId ' + track.videoId + ':', err);
+      if (err.name === 'AbortError') return;
+      if (err.name === 'NotAllowedError') {
+        setPlayerState('paused');
+        showBriefToast('⏸ กดปุ่ม ▶ เพื่อเริ่มเล่น');
+      } else {
+        setPlayerState('paused');
+        if (++consecutiveAudioErrors <= 2) setTimeout(() => autoplayNext(), 1500);
+      }
+    });
+  };
+  mediaEl.addEventListener('canplay', onCanPlay);
+
+  const onError = async () => {
+    mediaEl.removeEventListener('canplay', onCanPlay);
+    mediaEl.removeEventListener('error', onError);
+    if (useYtFallback || currentTrack?.videoId !== targetId || mediaEl !== getActiveMediaEl()) return;
+    setPlayerState('paused');
+
+    try {
+      const probe = await fetch(`${API}/stream?videoId=${encodeURIComponent(targetId)}&type=${streamType}`, { method: 'GET' });
+      if (probe.status === 503) {
+        serverHasYtDlp = false;
+        playViaYouTubeFallback(track);
+        syncVideoStageUI();
+        return;
+      }
+    } catch (_) {}
+
+    // If MP4 progressive video failed, fall back to audio-only stream or YouTube IFrame player
+    if (streamType === 'video' && allowVideoFallbackToAudio) {
+      console.warn('[video] Progressive MP4 unavailable, falling back to audio/YouTube stream:', targetId);
+      loadStreamOnMedia(audio, track, 'audio', resumeAt, false);
+      if (videoEl) videoEl.classList.add('hidden');
+      return;
+    }
+
+    console.error('[media] Error loading track:', track.videoId);
+    if (++consecutiveAudioErrors <= 2) {
+      setTimeout(() => autoplayNext(), 1500);
+    } else {
+      showBriefToast('⚠️ ไม่สามารถเล่นวิดีโอนี้ได้');
+    }
+  };
+  mediaEl.addEventListener('error', onError, { once: true });
+}
+
+async function loadAndPlay(track) {
   playerBar.classList.remove('hidden');
   // Mini player info
   playerTitle.textContent = track.title || '—';
   playerChannel.textContent = track.channel || '—';
   playerThumbImg.src = track.thumbnail || `https://img.youtube.com/vi/${track.videoId}/hqdefault.jpg`;
   progressFill.style.width = '0%';
+  npProgressFill.style.width = '0%';
+  npTimeCurrent.textContent = '0:00';
+  npTimeDuration.textContent = '0:00';
 
   // Now Playing panel info
   npTitle.textContent = track.title || '—';
@@ -569,45 +1047,15 @@ function loadAndPlay(track) {
   npArtwork.src = thumb;
   npBgBlur.style.backgroundImage = `url('${thumb}')`;
 
-
   setPlayerState('loading');
 
-  audio.src = `${API}/stream?videoId=${encodeURIComponent(track.videoId)}`;
-  audio.load();
-
-  // Wait for the audio to be ready (handles redirect to CDN URL)
-  const onCanPlay = () => {
-    audio.removeEventListener('canplay', onCanPlay);
-    audio.play().catch(err => {
-      console.error('Play failed for videoId ' + track.videoId + ':', err);
-      if (err.name === 'AbortError') {
-        // Safe to ignore — browser is still loading/redirecting
-        return;
-      }
-      if (err.name === 'NotAllowedError') {
-        setPlayerState('paused');
-        showBriefToast('⏸ กดปุ่ม ▶ เพื่อเริ่มเล่น');
-      } else {
-        setPlayerState('paused');
-        setTimeout(() => autoplayNext(), 2000);
-      }
-    });
-  };
-  audio.addEventListener('canplay', onCanPlay);
-
-  // Fallback: if canplay never fires (e.g. error) remove listener
-  const onError = () => {
-    audio.removeEventListener('canplay', onCanPlay);
-    audio.removeEventListener('error', onError);
-    setPlayerState('paused');
-    console.error('[audio] Error loading track:', track.videoId);
-    setTimeout(() => autoplayNext(), 2000);
-  };
-  audio.addEventListener('error', onError, { once: true });
+  playedSessionIds.add(track.videoId);
+  saveRecentTrack(track);
+  fetchUpNextRecommendations(track);
 
   // Record history if logged in
   if (currentUser) {
-    fetch('/api/history', {
+    fetch(`${API}/history`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -621,109 +1069,200 @@ function loadAndPlay(track) {
   updateQueueHighlight();
   renderNpQueue();
   setupMediaSession(track);
+
+  // Wait briefly for initial /api/info capability check if not completed yet
+  if (serverHasYtDlp === null) {
+    await Promise.race([capabilitiesPromise, new Promise(r => setTimeout(r, 1500))]);
+  }
+  if (currentTrack?.videoId !== track.videoId) return;
+
+  if (serverHasYtDlp === false) {
+    stopMediaElement(audio);
+    stopMediaElement(videoEl);
+    playViaYouTubeFallback(track);
+    syncVideoStageUI();
+    return;
+  }
+
+  useYtFallback = false;
+  stopYtProgressTimer();
+  if (ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
+    try { ytPlayer.pauseVideo(); } catch (_) {}
+  }
+
+  syncVideoStageUI();
+  loadStreamOnMedia(getActiveMediaEl(), track, isVideoMode ? 'video' : 'audio');
+}
+
+function getActiveDuration() {
+  if (useYtFallback && ytPlayer && typeof ytPlayer.getDuration === 'function') {
+    return ytPlayer.getDuration() || 0;
+  }
+  return getActiveMediaEl()?.duration || 0;
+}
+
+function getActiveCurrentTime() {
+  if (useYtFallback && ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
+    return ytPlayer.getCurrentTime() || 0;
+  }
+  return getActiveMediaEl()?.currentTime || 0;
+}
+
+function seekActivePlayer(seconds) {
+  if (useYtFallback && ytPlayer && typeof ytPlayer.seekTo === 'function') {
+    ytPlayer.seekTo(seconds, true);
+  } else {
+    const el = getActiveMediaEl();
+    if (el) el.currentTime = seconds;
+  }
+}
+
+function isActivePlayerPaused() {
+  if (useYtFallback && ytPlayer && typeof ytPlayer.getPlayerState === 'function') {
+    return ytPlayer.getPlayerState() !== 1;
+  }
+  return getActiveMediaEl()?.paused ?? true;
 }
 
 function togglePlayPause() {
   if (!currentTrack) return;
-  audio.paused ? audio.play().catch(console.error) : audio.pause();
+  if (useYtFallback && ytPlayer && typeof ytPlayer.playVideo === 'function') {
+    isActivePlayerPaused() ? ytPlayer.playVideo() : ytPlayer.pauseVideo();
+    return;
+  }
+  const el = getActiveMediaEl();
+  if (!el) return;
+  if (!el.getAttribute('src')) {
+    loadStreamOnMedia(el, currentTrack, isVideoMode ? 'video' : 'audio');
+    return;
+  }
+  el.paused ? el.play().catch(console.error) : el.pause();
 }
 
-// ── Audio Events ──────────────────────────────────────────────────────
-audio.addEventListener('playing', () => {
-  setPlayerState('playing');
-  artworkViz.classList.add('active');
-  npViz.classList.add('active');
-  bgPlayBadge.classList.remove('hidden');
-  updateMediaSessionState('playing');
-});
-audio.addEventListener('pause', () => {
-  setPlayerState('paused');
-  artworkViz.classList.remove('active');
-  npViz.classList.remove('active');
-  updateMediaSessionState('paused');
-});
-audio.addEventListener('waiting', () => setPlayerState('loading'));
-audio.addEventListener('canplay', () => { if (!audio.paused) setPlayerState('playing'); });
-audio.addEventListener('ended', () => {
-  artworkViz.classList.remove('active');
-  npViz.classList.remove('active');
-  if (isLoopOn) { loadAndPlay(currentTrack); }
-  else { autoplayNext(); }
-});
-audio.addEventListener('error', () => { setPlayerState('paused'); autoplayNext(); });
+// ── Media Element Events (shared for Audio & Video) ───────────────────
+function attachMediaEvents(el) {
+  if (!el) return;
+  el.addEventListener('playing', () => {
+    if (useYtFallback || el !== getActiveMediaEl()) return;
+    consecutiveAudioErrors = 0;
+    setPlayerState('playing');
+    artworkViz.classList.add('active');
+    npViz.classList.add('active');
+    bgPlayBadge.classList.remove('hidden');
+    updateMediaSessionState('playing');
+  });
+  el.addEventListener('pause', () => {
+    if (useYtFallback || el !== getActiveMediaEl()) return;
+    setPlayerState('paused');
+    artworkViz.classList.remove('active');
+    npViz.classList.remove('active');
+    updateMediaSessionState('paused');
+  });
+  el.addEventListener('waiting', () => {
+    if (!useYtFallback && el === getActiveMediaEl()) setPlayerState('loading');
+  });
+  el.addEventListener('canplay', () => {
+    if (!useYtFallback && el === getActiveMediaEl() && !el.paused) setPlayerState('playing');
+  });
+  el.addEventListener('ended', () => {
+    if (useYtFallback || el !== getActiveMediaEl()) return;
+    artworkViz.classList.remove('active');
+    npViz.classList.remove('active');
+    if (isLoopOn) { loadAndPlay(currentTrack); }
+    else { autoplayNext(); }
+  });
+  el.addEventListener('timeupdate', () => {
+    if (useYtFallback || el !== getActiveMediaEl() || isSeeking || !el.duration) return;
+    const pct = (el.currentTime / el.duration) * 100;
+    progressFill.style.width = `${pct}%`;
+    npProgressFill.style.width = `${pct}%`;
+    npProgressThumb.style.setProperty('--pct', `${pct}%`);
+    npTimeCurrent.textContent = formatTime(el.currentTime);
+    npTimeDuration.textContent = formatTime(el.duration);
+  });
+}
 
-audio.addEventListener('timeupdate', () => {
-  if (isSeeking || !audio.duration) return;
-  const pct = (audio.currentTime / audio.duration) * 100;
-  // Mini bar
-  progressFill.style.width = `${pct}%`;
-  // NP panel
-  npProgressFill.style.width = `${pct}%`;
-  npProgressThumb.style.setProperty('--pct', `${pct}%`);
-  npTimeCurrent.textContent = formatTime(audio.currentTime);
-  npTimeDuration.textContent = formatTime(audio.duration);
-});
+attachMediaEvents(audio);
+attachMediaEvents(videoEl);
 
-// Autoplay: play next in queue
-function autoplayNext() {
+async function pickNextRecommendedTrack() {
+  const queuedIds = new Set(queue.map(t => t.videoId));
+  let candidates = upNextRecommendations.filter(
+    t => !playedSessionIds.has(t.videoId) && !queuedIds.has(t.videoId)
+  );
+
+  if (!candidates.length && currentTrack) {
+    const fresh = await fetchUpNextRecommendations(currentTrack);
+    candidates = fresh.filter(t => !playedSessionIds.has(t.videoId) && !queuedIds.has(t.videoId));
+    if (!candidates.length) {
+      candidates = fresh.filter(t => t.videoId !== currentTrack.videoId);
+    }
+  }
+
+  if (!candidates.length) return null;
+
+  // Prefer a different artist/channel from currentTrack so playback stays varied like YouTube Radio
+  const currentCh = (currentTrack?.channel || '').trim().toLowerCase();
+  const differentChannel = currentCh
+    ? candidates.find(t => (t.channel || '').trim().toLowerCase() !== currentCh)
+    : null;
+
+  return differentChannel || candidates[0];
+}
+
+async function advancePlayback() {
   if (!queue.length) return;
-  let nextIdx;
+
   if (isShuffleOn) {
-    nextIdx = Math.floor(Math.random() * queue.length);
+    const unplayedInQueue = queue.filter(t => !playedSessionIds.has(t.videoId));
+    if (unplayedInQueue.length > 0) {
+      const pick = unplayedInQueue[Math.floor(Math.random() * unplayedInQueue.length)];
+      currentTrack = pick;
+      loadAndPlay(pick);
+      return;
+    }
   } else {
     const idx = queue.findIndex(t => t.videoId === currentTrack?.videoId);
     if (idx >= 0 && idx < queue.length - 1) {
-      nextIdx = idx + 1;
-    } else {
-      if (currentResults && currentResults.length > 0) {
-        const resIdx = currentResults.findIndex(t => t.videoId === currentTrack?.videoId);
-        if (resIdx >= 0 && resIdx < currentResults.length - 1) {
-          const nextRes = currentResults[resIdx + 1];
-          if (!queue.find(t => t.videoId === nextRes.videoId)) queue.push(nextRes);
-          updateQueueBadge();
-          currentTrack = nextRes;
-          loadAndPlay(nextRes);
-          return;
-        }
-      }
-      nextIdx = 0;
+      const next = queue[idx + 1];
+      currentTrack = next;
+      loadAndPlay(next);
+      return;
     }
   }
-  const next = queue[nextIdx];
-  if (next) { currentTrack = next; loadAndPlay(next); }
+
+  // Reached end of explicit queue: play YouTube-style "วิดีโอที่คุณอาจจะชอบ" instead of repeating same artist
+  if (isAutoplayRelated) {
+    const rec = await pickNextRecommendedTrack();
+    if (rec) {
+      if (!queue.find(t => t.videoId === rec.videoId)) queue.push(rec);
+      updateQueueBadge();
+      currentTrack = rec;
+      loadAndPlay(rec);
+      showBriefToast(`✨ เล่นวิดีโอแนะนำ: ${truncate(rec.title, 26)}`);
+      return;
+    }
+  }
+
+  if (queue.length > 1) {
+    const fallback = isShuffleOn
+      ? queue[Math.floor(Math.random() * queue.length)]
+      : queue[0];
+    if (fallback) { currentTrack = fallback; loadAndPlay(fallback); }
+  }
+}
+
+function autoplayNext() {
+  return advancePlayback();
 }
 
 function playNextInQueue() {
-  if (!queue.length) return;
-  let nextIdx;
-  if (isShuffleOn) {
-    nextIdx = Math.floor(Math.random() * queue.length);
-  } else {
-    const idx = queue.findIndex(t => t.videoId === currentTrack?.videoId);
-    if (idx >= 0 && idx < queue.length - 1) {
-      nextIdx = idx + 1;
-    } else {
-      if (currentResults && currentResults.length > 0) {
-        const resIdx = currentResults.findIndex(t => t.videoId === currentTrack?.videoId);
-        if (resIdx >= 0 && resIdx < currentResults.length - 1) {
-          const nextRes = currentResults[resIdx + 1];
-          if (!queue.find(t => t.videoId === nextRes.videoId)) queue.push(nextRes);
-          updateQueueBadge();
-          currentTrack = nextRes;
-          loadAndPlay(nextRes);
-          return;
-        }
-      }
-      nextIdx = 0;
-    }
-  }
-  const next = queue[nextIdx];
-  if (next) { currentTrack = next; loadAndPlay(next); }
+  return advancePlayback();
 }
 
 function playPrevInQueue() {
   if (!queue.length) return;
-  if (audio.currentTime > 3) { audio.currentTime = 0; return; }
+  if (getActiveCurrentTime() > 3) { seekActivePlayer(0); return; }
   const idx = queue.findIndex(t => t.videoId === currentTrack?.videoId);
   const prev = idx > 0 ? queue[idx - 1] : queue[queue.length - 1];
   if (prev) { currentTrack = prev; loadAndPlay(prev); }
@@ -757,8 +1296,17 @@ npBtnShuffle.addEventListener('click', () => {
   npBtnShuffle.title = isShuffleOn ? 'สุ่มเพลง: เปิด' : 'สุ่มเพลง: ปิด';
 });
 
-volumeSlider.addEventListener('input', () => { audio.volume = volumeSlider.value / 100; npVolumeSlider.value = volumeSlider.value; });
-npVolumeSlider.addEventListener('input', () => { audio.volume = npVolumeSlider.value / 100; volumeSlider.value = npVolumeSlider.value; });
+function applyVolume(val) {
+  const num = Number(val);
+  audio.volume = num / 100;
+  if (videoEl) videoEl.volume = num / 100;
+  if (ytPlayer && typeof ytPlayer.setVolume === 'function') {
+    ytPlayer.setVolume(num);
+  }
+}
+volumeSlider.addEventListener('input', () => { applyVolume(volumeSlider.value); npVolumeSlider.value = volumeSlider.value; });
+npVolumeSlider.addEventListener('input', () => { applyVolume(npVolumeSlider.value); volumeSlider.value = npVolumeSlider.value; });
+if (videoEl) videoEl.volume = Number(volumeSlider.value) / 100;
 
 // ── Player State ──────────────────────────────────────────────────────
 function setPlayerState(state) {
@@ -772,6 +1320,36 @@ function setPlayerState(state) {
   else { iconPlay.classList.remove('hidden'); npIconPlay.classList.remove('hidden'); }
 }
 
+// ── Video / Audio Stage Mode Toggle ───────────────────────────────────
+function toggleVideoMode() {
+  isVideoMode = !isVideoMode;
+  localStorage.setItem('wuntube_video_mode', isVideoMode ? '1' : '0');
+  syncVideoStageUI();
+  showBriefToast(isVideoMode ? '🎬 เปิดโหมดเล่นวิดีโอแล้ว' : '🎵 เปลี่ยนเป็นโหมดฟังเพลงแล้ว');
+
+  if (currentTrack && !useYtFallback) {
+    const prevEl = isVideoMode ? audio : videoEl;
+    const nextEl = getActiveMediaEl();
+    const curTime = prevEl ? (prevEl.currentTime || 0) : 0;
+    const wasPaused = prevEl ? prevEl.paused : true;
+    stopMediaElement(prevEl);
+    if (!wasPaused) {
+      loadStreamOnMedia(nextEl, currentTrack, isVideoMode ? 'video' : 'audio', curTime, true);
+    }
+  }
+}
+
+if (npBtnVideoMode) {
+  npBtnVideoMode.addEventListener('click', toggleVideoMode);
+}
+syncVideoStageUI();
+
+// Keep YouTube video overlay aligned with #npArtworkWrap
+window.addEventListener('resize', syncYtOverlayPosition);
+if (typeof ResizeObserver !== 'undefined' && npArtworkWrap) {
+  new ResizeObserver(syncYtOverlayPosition).observe(npArtworkWrap);
+}
+
 // ── Now Playing Panel ─────────────────────────────────────────────────
 // Click on player body (not controls) → open NP panel
 playerBodyClick.addEventListener('click', (e) => {
@@ -783,14 +1361,25 @@ function openNowPlaying() {
   nowPlayingPanel.classList.remove('hidden');
   document.body.style.overflow = 'hidden';
   renderNpQueue();
+  syncVideoStageUI();
+  requestAnimationFrame(syncYtOverlayPosition);
+  setTimeout(syncYtOverlayPosition, 320);
 }
 
 function closeNowPlaying() {
+  if (ytFallbackHost) {
+    ytFallbackHost.classList.remove('stage-active');
+    ytFallbackHost.style.top = '';
+    ytFallbackHost.style.left = '';
+    ytFallbackHost.style.width = '';
+    ytFallbackHost.style.height = '';
+  }
   nowPlayingPanel.classList.add('closing');
   setTimeout(() => {
     nowPlayingPanel.classList.add('hidden');
     nowPlayingPanel.classList.remove('closing');
     document.body.style.overflow = '';
+    syncYtOverlayPosition();
   }, 300);
 }
 
@@ -812,25 +1401,27 @@ function startNpSeek(e) {
 }
 
 function npSeek(e) {
-  if (!audio.duration) return;
+  const dur = getActiveDuration();
+  if (!dur) return;
   const rect = npProgressArea.getBoundingClientRect();
   const clientX = e.touches ? e.touches[0].clientX : e.clientX;
   const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-  const t = pct * audio.duration;
+  const t = pct * dur;
   npProgressFill.style.width = `${pct * 100}%`;
   npProgressThumb.style.setProperty('--pct', `${pct * 100}%`);
   progressFill.style.width = `${pct * 100}%`;
   npTimeCurrent.textContent = formatTime(t);
-  audio.currentTime = t;
+  seekActivePlayer(t);
 }
 
 // Mini bar seek
 progressArea.addEventListener('click', (e) => {
   e.stopPropagation();
-  if (!audio.duration) return;
+  const dur = getActiveDuration();
+  if (!dur) return;
   const rect = progressArea.getBoundingClientRect();
   const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-  audio.currentTime = pct * audio.duration;
+  seekActivePlayer(pct * dur);
 });
 
 // NP Queue Tab
@@ -872,7 +1463,11 @@ function renderNpQueue() {
 
 function renderNpRelated(results) {
   npRelatedList.innerHTML = '';
-  results.slice(0, 15).forEach((track, i) => {
+  if (!results || !results.length) {
+    npRelatedList.innerHTML = '<div class="queue-empty" style="padding:24px 0;font-size:.85rem">ยังไม่มีวิดีโอแนะนำ — ลองกดเล่นสัก 1 เพลง</div>';
+    return;
+  }
+  results.slice(0, 20).forEach((track, i) => {
     const isPlaying = currentTrack?.videoId === track.videoId;
     const item = document.createElement('div');
     item.className = 'queue-item' + (isPlaying ? ' active' : '');
@@ -883,8 +1478,15 @@ function renderNpRelated(results) {
         <div class="queue-title">${esc(track.title)}</div>
         <div class="queue-ch">${esc(track.channel || '')}</div>
       </div>
+      <button class="queue-remove" title="+ เพิ่มเข้าคิว" style="opacity:0.75">
+        <svg viewBox="0 0 24 24" fill="none"><line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
     `;
-    item.addEventListener('click', () => playTrack(track));
+    item.querySelector('.queue-info').addEventListener('click', () => playTrack(track));
+    item.querySelector('.queue-remove').addEventListener('click', (e) => {
+      e.stopPropagation();
+      addToQueue(track, true);
+    });
     npRelatedList.appendChild(item);
   });
 }
@@ -961,11 +1563,11 @@ function setupMediaSession(track) {
     album:  'WunTube',
     artwork: [{ src: track.thumbnail || `https://img.youtube.com/vi/${track.videoId}/hqdefault.jpg`, sizes: '480x360', type: 'image/jpeg' }],
   });
-  navigator.mediaSession.setActionHandler('play',          () => audio.play());
-  navigator.mediaSession.setActionHandler('pause',         () => audio.pause());
+  navigator.mediaSession.setActionHandler('play',          () => { if (isActivePlayerPaused()) togglePlayPause(); });
+  navigator.mediaSession.setActionHandler('pause',         () => { if (!isActivePlayerPaused()) togglePlayPause(); });
   navigator.mediaSession.setActionHandler('previoustrack', playPrevInQueue);
   navigator.mediaSession.setActionHandler('nexttrack',     playNextInQueue);
-  navigator.mediaSession.setActionHandler('seekto',        (d) => { if (d.seekTime !== undefined) audio.currentTime = d.seekTime; });
+  navigator.mediaSession.setActionHandler('seekto',        (d) => { if (d.seekTime !== undefined) seekActivePlayer(d.seekTime); });
 }
 function updateMediaSessionState(state) {
   if ('mediaSession' in navigator) navigator.mediaSession.playbackState = state;
@@ -973,20 +1575,66 @@ function updateMediaSessionState(state) {
 
 // ── Download ──────────────────────────────────────────────────────────
 const activeDownloads = new Set();
-function downloadTrack(videoId, title) {
+async function downloadTrack(videoId, title) {
+  if (serverHasYtDlp !== true) {
+    try {
+      const infoRes = await fetch(`${API}/info`);
+      if (infoRes.ok) {
+        const infoData = await infoRes.json();
+        serverHasYtDlp = Boolean(infoData.hasYtDlp);
+      }
+    } catch (_) {}
+  }
+
+  if (serverHasYtDlp === false) {
+    showBriefToast('⚠️ เซิร์ฟเวอร์นี้ไม่มี yt-dlp/ffmpeg สำหรับแปลงไฟล์ MP3');
+    return;
+  }
   if (activeDownloads.has(videoId)) return;
   activeDownloads.add(videoId);
   const btn = document.getElementById(`dl-${videoId}`);
   if (btn) btn.classList.add('loading');
-  showToast(`ดาวน์โหลด "${truncate(title, 35)}"`, '⬇️');
-  const a = document.createElement('a');
-  a.href = `${API}/download?videoId=${encodeURIComponent(videoId)}&title=${encodeURIComponent(title)}`;
-  a.download = `${title}.mp3`;
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => { if (btn) btn.classList.remove('loading'); activeDownloads.delete(videoId); hideToast(); }, 35000);
+  showToast(`กำลังแปลง MP3 "${truncate(title, 30)}"...`, '⬇️');
+
+  try {
+    const res = await fetch(`${API}/download?videoId=${encodeURIComponent(videoId)}&title=${encodeURIComponent(title)}`);
+    if (!res.ok) {
+      let errMsg = `ดาวน์โหลดไม่สำเร็จ (HTTP ${res.status})`;
+      try {
+        const errData = await res.json();
+        if (errData?.code === 'YTDLP_UNAVAILABLE') {
+          serverHasYtDlp = false;
+          errMsg = '⚠️ เซิร์ฟเวอร์นี้ไม่มี yt-dlp/ffmpeg สำหรับแปลงไฟล์ MP3';
+        } else if (errData?.error) {
+          errMsg = errData.error;
+        }
+      } catch (_) {}
+      showBriefToast(errMsg);
+      return;
+    }
+
+    const blob = await res.blob();
+    const ct = (res.headers.get('content-type') || '').toLowerCase();
+    const ext = ct.includes('mp4') ? 'm4a' : (ct.includes('webm') ? 'webm' : 'mp3');
+    const safeName = (title || videoId).replace(/[\\/:*?"<>|]+/g, '_').trim() || videoId;
+
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = `${safeName}.${ext}`;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+    showBriefToast(`✓ ดาวน์โหลด "${truncate(title, 28)}" สำเร็จ`);
+  } catch (err) {
+    console.error('Download failed:', err);
+    showBriefToast('❌ เกิดข้อผิดพลาดในการดาวน์โหลด');
+  } finally {
+    if (btn) btn.classList.remove('loading');
+    activeDownloads.delete(videoId);
+  }
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────
@@ -1024,16 +1672,30 @@ function esc(str) {
 // ── Share Link ─────────────────────────────────────────────────────────
 async function loadShareInfo() {
   try {
-    const res = await fetch('/api/info'); if (!res.ok) return;
+    const res = await fetch(`${API}/info`);
+    if (!res.ok) {
+      if (capabilitiesResolve) { capabilitiesResolve(); capabilitiesResolve = null; }
+      return;
+    }
     const data = await res.json();
+    if (typeof data.hasYtDlp === 'boolean') {
+      serverHasYtDlp = data.hasYtDlp;
+    }
+    if (capabilitiesResolve) {
+      capabilitiesResolve();
+      capabilitiesResolve = null;
+    }
+
     const url = data.publicUrl || (data.localUrls && data.localUrls[0]);
     if (!url) return;
     shareUrlInput.value = url;
     shareBar.classList.remove('hidden');
     shareHint.textContent = data.publicUrl
       ? (data.tunnelPassword ? `ลิงก์อินเทอร์เน็ต — password: ${data.tunnelPassword}` : 'ลิงก์นี้เปิดจากอินเทอร์เน็ตได้')
-      : 'ใช้ได้ใน Wi-Fi เดียวกัน — รัน npm run share เพื่อลิงก์อินเทอร์เน็ต';
-  } catch (_) {}
+      : 'ใช้ได้ใน Wi-Fi เดียวกัน — รัน php share.php เพื่อลิงก์อินเทอร์เน็ต';
+  } catch (_) {
+    if (capabilitiesResolve) { capabilitiesResolve(); capabilitiesResolve = null; }
+  }
 }
 copyShareBtn.addEventListener('click', async () => {
   try { await navigator.clipboard.writeText(shareUrlInput.value); }
@@ -1044,7 +1706,7 @@ copyShareBtn.addEventListener('click', async () => {
 
 // Background badge visibility
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && !audio.paused) bgPlayBadge.classList.remove('hidden');
+  if (!document.hidden && !isActivePlayerPaused()) bgPlayBadge.classList.remove('hidden');
 });
 
 // ── Auth ───────────────────────────────────────────────────────────────
@@ -1085,7 +1747,7 @@ async function handleAuth(e) {
   const password = authPassword.value;
   const name = authName.value;
 
-  const endpoint = isRegisterMode ? '/api/register' : '/api/login';
+  const endpoint = isRegisterMode ? `${API}/register` : `${API}/login`;
   const body = { email, password, name };
 
   try {
@@ -1125,7 +1787,7 @@ async function checkAuth() {
   if (!token) return updateAuthUI();
   
   try {
-    const res = await fetch('/api/me', {
+    const res = await fetch(`${API}/me`, {
       headers: { 'Authorization': `Bearer ${token}` }
     });
     const data = await res.json();
@@ -1143,16 +1805,19 @@ async function checkAuth() {
 
 function updateAuthUI() {
   if (currentUser) {
-    bNavLoginText.textContent = 'โปรไฟล์';
-    userAvatarBtn.classList.remove('hidden');
-    userAvatarText.textContent = currentUser.name.charAt(0).toUpperCase();
+    if (bNavLoginText) bNavLoginText.textContent = 'โปรไฟล์';
+    if (headerSignInBtn) headerSignInBtn.classList.add('hidden');
+    if (userAvatarBtn) userAvatarBtn.classList.remove('hidden');
+    if (userAvatarText) userAvatarText.textContent = (currentUser.name || currentUser.email || 'U').charAt(0).toUpperCase();
     fetchAndRenderTopFavorites();
   } else {
-    bNavLoginText.textContent = 'เข้าสู่ระบบ';
-    userAvatarBtn.classList.add('hidden');
+    if (bNavLoginText) bNavLoginText.textContent = 'เข้าสู่ระบบ';
+    if (headerSignInBtn) headerSignInBtn.classList.remove('hidden');
+    if (userAvatarBtn) userAvatarBtn.classList.add('hidden');
     const tfSection = document.getElementById('topFavoritesSection');
     if (tfSection) tfSection.classList.add('hidden');
   }
+  fetchHomeRecommendations();
 }
 
 async function fetchAndRenderTopFavorites() {
@@ -1161,7 +1826,7 @@ async function fetchAndRenderTopFavorites() {
   if (!tfSection || !tfGrid) return;
   
   try {
-    const res = await fetch('/api/top-favorites', {
+    const res = await fetch(`${API}/top-favorites`, {
       headers: { 'Authorization': `Bearer ${localStorage.getItem('wuntube_token')}` }
     });
     if (!res.ok) return;
@@ -1171,15 +1836,29 @@ async function fetchAndRenderTopFavorites() {
       data.favorites.forEach(track => {
         const div = document.createElement('div');
         div.className = 'curated-card';
-        div.onclick = () => quickSearch({ textContent: track.title });
+        div.dataset.videoid = track.videoId;
+        div.onclick = () => playTrack({
+          videoId: track.videoId,
+          title: track.title,
+          channel: track.channel,
+          thumbnail: `https://img.youtube.com/vi/${track.videoId}/hqdefault.jpg`
+        });
         div.innerHTML = `
           <div class="curated-thumb">
-            <img src="https://img.youtube.com/vi/${esc(track.videoId)}/hqdefault.jpg" alt=""/>
-            <div class="curated-overlay">★<br/>${track.playCount} plays</div>
+            <img src="https://img.youtube.com/vi/${esc(track.videoId)}/hqdefault.jpg" alt="" loading="lazy"/>
+            <span class="curated-duration">★ ${track.playCount}</span>
+            <div class="curated-play-pill">
+              <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+            </div>
           </div>
-          <div class="curated-info">
-            <p class="curated-title">${esc(track.title)}</p>
-            <p class="curated-sub">${esc(track.channel)}</p>
+          <div class="yt-card-body">
+            ${getChannelAvatarHtml(track.channel || 'YouTube')}
+            <div class="curated-info">
+              <p class="curated-title">${esc(track.title)}</p>
+              <div class="curated-meta-row">
+                <p class="curated-sub">${esc(track.channel || 'YouTube')}</p>
+              </div>
+            </div>
           </div>
         `;
         tfGrid.appendChild(div);
@@ -1255,15 +1934,14 @@ async function handleFirebaseGoogleLogin() {
 }
 
 function focusSearch(e) {
-  if(e) e.preventDefault();
-  showView('home');
-  window.scrollTo(0, 0);
+  if (e) e.preventDefault();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
   setTimeout(() => {
-    searchInput.focus();
-    // scroll to search on mobile
-    const hw = document.querySelector('.hero-search-wrap');
-    if(hw) hw.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, 150);
+    if (searchInput) {
+      searchInput.focus();
+      searchInput.select();
+    }
+  }, 100);
 }
 
 // ── Init ───────────────────────────────────────────────────────────────

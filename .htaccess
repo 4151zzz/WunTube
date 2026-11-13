@@ -1,0 +1,22 @@
+DirectoryIndex index.php index.html
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Forward Authorization header to PHP under Apache CGI/FastCGI
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+    # Block direct web access to backend source, storage, database, config, and dotfiles (except ACME SSL)
+    RewriteRule ^(src|storage)(/|$) - [F,L,NC]
+    RewriteRule ^(config\.php|router\.php|share\.php|server\.js|package(-lock)?\.json|firebase-service-account\.json|search_results\.json|yt(_search)?\.json)$ - [F,L,NC]
+    RewriteRule \.(db|sqlite|sqlite3|ps1|bat|env)$ - [F,L,NC]
+    RewriteCond %{REQUEST_URI} !/\.well-known/
+    RewriteRule ^\.git - [F,L,NC]
+
+    # Route API calls and front-page requests to index.php
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^ index.php [QSA,L]
+</IfModule>
+

@@ -160,6 +160,41 @@ let consecutiveAudioErrors = 0;
 let recFetchController = null;
 let capabilitiesResolve = null;
 const capabilitiesPromise = new Promise(resolve => { capabilitiesResolve = resolve; });
+let userPausedPlayback = false;
+let wasPlayingBeforeHide = false;
+let lastMediaPosSyncAt = 0;
+let keepAliveAudioCtx = null;
+let keepAliveGain = null;
+let keepAliveOsc = null;
+
+// Keep mobile browser audio pipeline & JS timers awake across track transitions when screen locks
+function startBackgroundKeepAlive() {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    if (!keepAliveAudioCtx) {
+      keepAliveAudioCtx = new AudioCtx();
+      keepAliveGain = keepAliveAudioCtx.createGain();
+      keepAliveGain.gain.value = 0.00001;
+      keepAliveOsc = keepAliveAudioCtx.createOscillator();
+      keepAliveOsc.frequency.value = 1;
+      keepAliveOsc.connect(keepAliveGain);
+      keepAliveGain.connect(keepAliveAudioCtx.destination);
+      keepAliveOsc.start();
+    }
+    if (keepAliveAudioCtx.state === 'suspended') {
+      keepAliveAudioCtx.resume().catch(() => {});
+    }
+  } catch (_) {}
+}
+
+function stopBackgroundKeepAlive() {
+  try {
+    if (keepAliveAudioCtx && keepAliveAudioCtx.state === 'running') {
+      keepAliveAudioCtx.suspend().catch(() => {});
+    }
+  } catch (_) {}
+}
 
 
 // ── Playlists (localStorage) ─────────────────────────────────────────
@@ -852,12 +887,22 @@ async function playViaYouTubeFallback(track) {
             npViz.classList.add('active');
             bgPlayBadge.classList.remove('hidden');
             updateMediaSessionState('playing');
+            updateMediaSessionPosition(ytPlayer?.getDuration?.(), ytPlayer?.getCurrentTime?.());
             startYtProgressTimer();
           } else if (ev.data === YT.PlayerState.PAUSED) {
+            if (document.hidden && wasPlayingBeforeHide && !userPausedPlayback) {
+              setTimeout(() => {
+                if (useYtFallback && !userPausedPlayback && ytPlayer?.playVideo) {
+                  try { ytPlayer.playVideo(); } catch (_) {}
+                }
+              }, 250);
+              return;
+            }
             setPlayerState('paused');
             artworkViz.classList.remove('active');
             npViz.classList.remove('active');
             updateMediaSessionState('paused');
+            updateMediaSessionPosition(ytPlayer?.getDuration?.(), ytPlayer?.getCurrentTime?.());
             stopYtProgressTimer();
           } else if (ev.data === YT.PlayerState.BUFFERING) {
             setPlayerState('loading');
@@ -890,6 +935,9 @@ async function playViaYouTubeFallback(track) {
 
 function playTrack(track) {
   if (typeof track === 'string') track = JSON.parse(track);
+
+  startBackgroundKeepAlive();
+  userPausedPlayback = false;
 
   if (currentTrack?.videoId === track.videoId) {
     togglePlayPause();
@@ -939,12 +987,14 @@ async function loadAndPlay(track) {
     }).catch(console.error);
   }
 
+  userPausedPlayback = false;
+  startBackgroundKeepAlive();
   highlightPlayingCard(track.videoId);
   updateQueueHighlight();
   renderNpQueue();
   setupMediaSession(track);
 
-  // Wait briefly for initial /api/info capability check if not completed yet
+  // Wait briefly for initial /api/info capability check ONLY if still unknown
   if (serverHasYtDlp === null) {
     await Promise.race([capabilitiesPromise, new Promise(r => setTimeout(r, 1500))]);
   }
@@ -965,12 +1015,13 @@ async function loadAndPlay(track) {
   }
 
   const targetId = track.videoId;
+  let playAttemptedFromCanPlay = false;
   audio.src = `${API}/stream?videoId=${encodeURIComponent(track.videoId)}`;
   audio.load();
 
-  const onCanPlay = () => {
-    audio.removeEventListener('canplay', onCanPlay);
-    if (useYtFallback || currentTrack?.videoId !== targetId) return;
+  // Trigger play() immediately inside the active gesture / ended tick so mobile OS retains lock-screen audio focus
+  const triggerAudioPlay = () => {
+    if (useYtFallback || currentTrack?.videoId !== targetId || userPausedPlayback) return;
     audio.play().catch(err => {
       console.error('Play failed for videoId ' + track.videoId + ':', err);
       if (err.name === 'AbortError') return;
@@ -982,6 +1033,14 @@ async function loadAndPlay(track) {
         if (++consecutiveAudioErrors <= 2) setTimeout(() => autoplayNext(), 1500);
       }
     });
+  };
+  triggerAudioPlay();
+
+  const onCanPlay = () => {
+    audio.removeEventListener('canplay', onCanPlay);
+    if (useYtFallback || currentTrack?.videoId !== targetId || playAttemptedFromCanPlay) return;
+    playAttemptedFromCanPlay = true;
+    if (audio.paused && !userPausedPlayback) triggerAudioPlay();
   };
   audio.addEventListener('canplay', onCanPlay);
 
@@ -1023,8 +1082,10 @@ function getActiveCurrentTime() {
 function seekActivePlayer(seconds) {
   if (useYtFallback && ytPlayer && typeof ytPlayer.seekTo === 'function') {
     ytPlayer.seekTo(seconds, true);
+    updateMediaSessionPosition(ytPlayer.getDuration?.(), seconds);
   } else {
     audio.currentTime = seconds;
+    updateMediaSessionPosition(audio.duration, seconds);
   }
 }
 
@@ -1038,21 +1099,40 @@ function isActivePlayerPaused() {
 function togglePlayPause() {
   if (!currentTrack) return;
   if (useYtFallback && ytPlayer && typeof ytPlayer.playVideo === 'function') {
-    isActivePlayerPaused() ? ytPlayer.playVideo() : ytPlayer.pauseVideo();
+    if (isActivePlayerPaused()) {
+      userPausedPlayback = false;
+      startBackgroundKeepAlive();
+      ytPlayer.playVideo();
+    } else {
+      userPausedPlayback = true;
+      stopBackgroundKeepAlive();
+      ytPlayer.pauseVideo();
+    }
     return;
   }
-  audio.paused ? audio.play().catch(console.error) : audio.pause();
+  if (audio.paused) {
+    userPausedPlayback = false;
+    startBackgroundKeepAlive();
+    audio.play().catch(console.error);
+  } else {
+    userPausedPlayback = true;
+    stopBackgroundKeepAlive();
+    audio.pause();
+  }
 }
 
 // ── Audio Events ──────────────────────────────────────────────────────
 audio.addEventListener('playing', () => {
   if (useYtFallback) return;
   consecutiveAudioErrors = 0;
+  userPausedPlayback = false;
+  startBackgroundKeepAlive();
   setPlayerState('playing');
   artworkViz.classList.add('active');
   npViz.classList.add('active');
   bgPlayBadge.classList.remove('hidden');
   updateMediaSessionState('playing');
+  updateMediaSessionPosition(audio.duration, audio.currentTime);
 });
 audio.addEventListener('pause', () => {
   if (useYtFallback) return;
@@ -1060,6 +1140,11 @@ audio.addEventListener('pause', () => {
   artworkViz.classList.remove('active');
   npViz.classList.remove('active');
   updateMediaSessionState('paused');
+  updateMediaSessionPosition(audio.duration, audio.currentTime);
+  if (userPausedPlayback) stopBackgroundKeepAlive();
+});
+audio.addEventListener('loadedmetadata', () => {
+  if (!useYtFallback) updateMediaSessionPosition(audio.duration, audio.currentTime);
 });
 audio.addEventListener('waiting', () => { if (!useYtFallback) setPlayerState('loading'); });
 audio.addEventListener('canplay', () => { if (!useYtFallback && !audio.paused) setPlayerState('playing'); });
@@ -1078,34 +1163,51 @@ audio.addEventListener('timeupdate', () => {
   npProgressThumb.style.setProperty('--pct', `${pct}%`);
   npTimeCurrent.textContent = formatTime(audio.currentTime);
   npTimeDuration.textContent = formatTime(audio.duration);
+  const now = Date.now();
+  if (now - lastMediaPosSyncAt >= 1000) {
+    lastMediaPosSyncAt = now;
+    updateMediaSessionPosition(audio.duration, audio.currentTime);
+  }
 });
 
-async function pickNextRecommendedTrack() {
+function pickCachedRecommendedTrack() {
   const queuedIds = new Set(queue.map(t => t.videoId));
-  let candidates = upNextRecommendations.filter(
+  const candidates = upNextRecommendations.filter(
     t => !playedSessionIds.has(t.videoId) && !queuedIds.has(t.videoId)
   );
-
-  if (!candidates.length && currentTrack) {
-    const fresh = await fetchUpNextRecommendations(currentTrack);
-    candidates = fresh.filter(t => !playedSessionIds.has(t.videoId) && !queuedIds.has(t.videoId));
-    if (!candidates.length) {
-      candidates = fresh.filter(t => t.videoId !== currentTrack.videoId);
-    }
-  }
-
   if (!candidates.length) return null;
 
-  // Prefer a different artist/channel from currentTrack so playback stays varied like YouTube Radio
   const currentCh = (currentTrack?.channel || '').trim().toLowerCase();
   const differentChannel = currentCh
     ? candidates.find(t => (t.channel || '').trim().toLowerCase() !== currentCh)
     : null;
-
   return differentChannel || candidates[0];
 }
 
-async function advancePlayback() {
+async function pickNextRecommendedTrack() {
+  const cached = pickCachedRecommendedTrack();
+  if (cached) return cached;
+
+  if (currentTrack) {
+    const queuedIds = new Set(queue.map(t => t.videoId));
+    const fresh = await fetchUpNextRecommendations(currentTrack);
+    let candidates = fresh.filter(t => !playedSessionIds.has(t.videoId) && !queuedIds.has(t.videoId));
+    if (!candidates.length) {
+      candidates = fresh.filter(t => t.videoId !== currentTrack.videoId);
+    }
+    if (!candidates.length) return null;
+
+    const currentCh = (currentTrack?.channel || '').trim().toLowerCase();
+    const differentChannel = currentCh
+      ? candidates.find(t => (t.channel || '').trim().toLowerCase() !== currentCh)
+      : null;
+    return differentChannel || candidates[0];
+  }
+
+  return null;
+}
+
+function advancePlayback() {
   if (!queue.length) return;
 
   if (isShuffleOn) {
@@ -1126,17 +1228,33 @@ async function advancePlayback() {
     }
   }
 
-  // Reached end of explicit queue: play YouTube-style "วิดีโอที่คุณอาจจะชอบ" instead of repeating same artist
+  // Reached end of explicit queue: play cached recommendation synchronously so screen-off autoplay doesn't drop audio session
   if (isAutoplayRelated) {
-    const rec = await pickNextRecommendedTrack();
-    if (rec) {
-      if (!queue.find(t => t.videoId === rec.videoId)) queue.push(rec);
+    const cachedRec = pickCachedRecommendedTrack();
+    if (cachedRec) {
+      if (!queue.find(t => t.videoId === cachedRec.videoId)) queue.push(cachedRec);
       updateQueueBadge();
-      currentTrack = rec;
-      loadAndPlay(rec);
-      showBriefToast(`✨ เล่นวิดีโอแนะนำ: ${truncate(rec.title, 26)}`);
+      currentTrack = cachedRec;
+      loadAndPlay(cachedRec);
+      showBriefToast(`✨ เล่นเพลงแนะนำ: ${truncate(cachedRec.title, 26)}`);
       return;
     }
+
+    pickNextRecommendedTrack().then(rec => {
+      if (rec) {
+        if (!queue.find(t => t.videoId === rec.videoId)) queue.push(rec);
+        updateQueueBadge();
+        currentTrack = rec;
+        loadAndPlay(rec);
+        showBriefToast(`✨ เล่นเพลงแนะนำ: ${truncate(rec.title, 26)}`);
+        return;
+      }
+      if (queue.length > 1) {
+        const fallback = isShuffleOn ? queue[Math.floor(Math.random() * queue.length)] : queue[0];
+        if (fallback) { currentTrack = fallback; loadAndPlay(fallback); }
+      }
+    }).catch(() => {});
+    return;
   }
 
   if (queue.length > 1) {
@@ -1406,23 +1524,48 @@ clearQueueBtn.addEventListener('click', () => {
   renderNpQueue();
 });
 
-// ── Media Session ─────────────────────────────────────────────────────
+// ── Media Session (Lock-screen & Background Playback Controls) ────────
 function setupMediaSession(track) {
   if (!('mediaSession' in navigator)) return;
+  const thumbFallback = track.thumbnail || `https://img.youtube.com/vi/${track.videoId}/hqdefault.jpg`;
   navigator.mediaSession.metadata = new MediaMetadata({
     title:  track.title   || 'Unknown',
     artist: track.channel || 'YouTube',
     album:  'WunTube',
-    artwork: [{ src: track.thumbnail || `https://img.youtube.com/vi/${track.videoId}/hqdefault.jpg`, sizes: '480x360', type: 'image/jpeg' }],
+    artwork: [
+      { src: `https://img.youtube.com/vi/${track.videoId}/mqdefault.jpg`, sizes: '320x180', type: 'image/jpeg' },
+      { src: thumbFallback, sizes: '480x360', type: 'image/jpeg' },
+      { src: `https://img.youtube.com/vi/${track.videoId}/sddefault.jpg`, sizes: '640x480', type: 'image/jpeg' },
+    ],
   });
-  navigator.mediaSession.setActionHandler('play',          () => { if (isActivePlayerPaused()) togglePlayPause(); });
-  navigator.mediaSession.setActionHandler('pause',         () => { if (!isActivePlayerPaused()) togglePlayPause(); });
-  navigator.mediaSession.setActionHandler('previoustrack', playPrevInQueue);
-  navigator.mediaSession.setActionHandler('nexttrack',     playNextInQueue);
-  navigator.mediaSession.setActionHandler('seekto',        (d) => { if (d.seekTime !== undefined) seekActivePlayer(d.seekTime); });
+  const setHandler = (action, fn) => {
+    try { navigator.mediaSession.setActionHandler(action, fn); } catch (_) {}
+  };
+  setHandler('play',          () => { if (isActivePlayerPaused()) togglePlayPause(); });
+  setHandler('pause',         () => { if (!isActivePlayerPaused()) togglePlayPause(); });
+  setHandler('stop',          () => { if (!isActivePlayerPaused()) togglePlayPause(); });
+  setHandler('previoustrack', playPrevInQueue);
+  setHandler('nexttrack',     playNextInQueue);
+  setHandler('seekbackward',  (d) => seekActivePlayer(Math.max(0, getActiveCurrentTime() - (d?.seekOffset || 10))));
+  setHandler('seekforward',   (d) => {
+    const dur = getActiveDuration();
+    const target = getActiveCurrentTime() + (d?.seekOffset || 10);
+    seekActivePlayer(dur > 0 ? Math.min(dur, target) : target);
+  });
+  setHandler('seekto',        (d) => { if (d.seekTime !== undefined) seekActivePlayer(d.seekTime); });
 }
 function updateMediaSessionState(state) {
   if ('mediaSession' in navigator) navigator.mediaSession.playbackState = state;
+}
+function updateMediaSessionPosition(duration, position) {
+  if (!('mediaSession' in navigator) || typeof navigator.mediaSession.setPositionState !== 'function') return;
+  const dur = Number(duration);
+  const pos = Number(position);
+  if (!Number.isFinite(dur) || dur <= 0) return;
+  const clampedPos = Number.isFinite(pos) ? Math.min(dur, Math.max(0, pos)) : 0;
+  try {
+    navigator.mediaSession.setPositionState({ duration: dur, playbackRate: 1, position: clampedPos });
+  } catch (_) {}
 }
 
 // ── Download ──────────────────────────────────────────────────────────
@@ -1556,9 +1699,35 @@ copyShareBtn.addEventListener('click', async () => {
   setTimeout(() => { copyShareBtn.textContent = 'คัดลอก'; }, 2000);
 });
 
-// Background badge visibility
+// Background & Lock-Screen playback continuity
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && !isActivePlayerPaused()) bgPlayBadge.classList.remove('hidden');
+  if (document.hidden) {
+    wasPlayingBeforeHide = !isActivePlayerPaused();
+    if (wasPlayingBeforeHide && !userPausedPlayback && currentTrack) {
+      startBackgroundKeepAlive();
+      updateMediaSessionState('playing');
+      updateMediaSessionPosition(getActiveDuration(), getActiveCurrentTime());
+      if (useYtFallback && ytPlayer && typeof ytPlayer.playVideo === 'function') {
+        setTimeout(() => {
+          if (document.hidden && wasPlayingBeforeHide && !userPausedPlayback && isActivePlayerPaused()) {
+            try { ytPlayer.playVideo(); } catch (_) {}
+          }
+        }, 350);
+      }
+    }
+    return;
+  }
+
+  if (!isActivePlayerPaused()) {
+    bgPlayBadge.classList.remove('hidden');
+  } else if (wasPlayingBeforeHide && !userPausedPlayback && currentTrack) {
+    if (useYtFallback && ytPlayer && typeof ytPlayer.playVideo === 'function') {
+      try { ytPlayer.playVideo(); } catch (_) {}
+    } else if (audio.getAttribute('src')) {
+      audio.play().catch(() => {});
+    }
+  }
+  wasPlayingBeforeHide = false;
 });
 
 // ── Auth ───────────────────────────────────────────────────────────────

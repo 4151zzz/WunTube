@@ -88,7 +88,7 @@ $cineSlides = [
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="description" content="เล่นเพลงและวิดีโอจาก YouTube พร้อมเล่นต่อเนื่องอัตโนมัติ ไม่มีโฆษณา" />
+  <meta name="description" content="เล่นเพลงจาก YouTube ต่อเนื่องแม้ดับหน้าจอ ไม่มีโฆษณา" />
   <meta name="theme-color" content="#0f0f0f" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -115,7 +115,7 @@ $cineSlides = [
   </div>
 
   <!-- Hidden audio element & fallback YouTube player host (for servers without yt-dlp) -->
-  <audio id="globalAudio" preload="none"></audio>
+  <audio id="globalAudio" preload="auto" playsinline webkit-playsinline x-webkit-airplay="allow"></audio>
   <div id="ytFallbackHost" class="yt-fallback-host" aria-hidden="true"></div>
 
   <!-- ═══ NOW PLAYING EXPANDED VIEW ═══ -->

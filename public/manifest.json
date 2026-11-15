@@ -1,17 +1,18 @@
 {
   "name": "WunTube",
   "short_name": "WunTube",
-  "description": "เล่นเพลงจาก YouTube พร้อม Background Playback",
+  "description": "เล่นเพลงจาก YouTube ต่อเนื่องแม้ดับหน้าจอ",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#060810",
-  "theme_color": "#7c4dff",
+  "background_color": "#0f0f0f",
+  "theme_color": "#0f0f0f",
   "orientation": "any",
   "icons": [
     {
-      "src": "https://img.icons8.com/color/192/music.png",
+      "src": "/app-icon.png",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any maskable"
     }
   ]
 }
